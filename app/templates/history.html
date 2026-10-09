@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ app_name }} — History</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="app-header">
+      <div>
+        <h1>{{ app_name }}</h1>
+        <div class="sub">Document history</div>
+      </div>
+      <nav>
+        <a href="/">Upload</a>
+        <a class="active" href="/history">History</a>
+        <a href="/docs" target="_blank">API Docs</a>
+      </nav>
+    </header>
+
+    <div class="card">
+      <h2>Uploaded documents</h2>
+      <table class="history">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Filename</th>
+            <th>Status</th>
+            <th>Uploaded</th>
+            <th>Verified</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="history-body">
+          <tr><td colspan="6" class="muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script src="/static/js/app.js"></script>
+  <script>ChargeSheetApp.initHistoryPage();</script>
+</body>
+</html>

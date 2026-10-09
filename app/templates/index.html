@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ app_name }} — Upload</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="app-header">
+      <div>
+        <h1>{{ app_name }}</h1>
+        <div class="sub">Local-only PDF extraction · template-independent mapping</div>
+      </div>
+      <nav>
+        <a class="active" href="/">Upload</a>
+        <a href="/history">History</a>
+        <a href="/docs" target="_blank">API Docs</a>
+      </nav>
+    </header>
+
+    <div class="card">
+      <h2>Upload charge sheet PDF</h2>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0">
+        <p><strong>Drag & drop</strong> a PDF here</p>
+        <p class="hint">or click to select · digital or scanned · multi-page supported</p>
+      </div>
+      <input id="file-input" type="file" accept="application/pdf,.pdf" class="hidden" />
+      <div id="file-meta" style="margin-top:1rem"></div>
+      <div class="progress" id="progress"><span></span></div>
+      <div class="row" style="margin-top:1rem">
+        <button class="btn" id="upload-btn" disabled>Upload & process</button>
+      </div>
+      <div id="upload-status" class="hidden"></div>
+    </div>
+  </div>
+  <script src="/static/js/app.js"></script>
+  <script>ChargeSheetApp.initUploadPage();</script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "document": "FIR 83/2020 Charge Sheet (Haveli Ghanapur PS, Medak)",
+  "source_file": "uploads/80d251b418464972b530f8b865dd58ee_2021-04-19_13.28.35.818.0.38051334.pdf",
+  "notes": "Manually verified against native PDF text. Age 33 (col.12) vs 32 (narrative) and Aerrolla vs Errolla are real source inconsistencies — must remain unresolved conflicts.",
+  "scalar_fields": {
+    "district": "Medak",
+    "police_station": "Haveli Ghanapur",
+    "year": "2020",
+    "fir_number": "83/2020",
+    "fir_date": "05.05.2020",
+    "submission_date": "19.04.2021",
+    "final_report_type": "Charge sheet",
+    "supplementary_or_original": "Original"
+  },
+  "legal_sections": [
+    {"act": "IPC", "section": "188"},
+    {"act": "A.P. Excise Act", "section": "34(a)"},
+    {"act": "NDPS Act", "section": "8(C) r/w 22"}
+  ],
+  "accused": [
+    {
+      "name": "Aerrolla Rajender Goud",
+      "age": "33",
+      "parent_or_spouse_contains": "Kishta",
+      "address_contains": "Kuchanpally"
+    }
+  ],
+  "witnesses": [
+    {"serial_no": "1", "name_contains": "Mohammad Tayer"},
+    {"serial_no": "2", "name_contains": "Talari Mahander"},
+    {"serial_no": "3", "name_contains": "Lingampally Sathyanarayana"},
+    {"serial_no": "4", "name_contains": "Talari Yesaiah"},
+    {"serial_no": "5", "name_contains": "Boini Ramulu"},
+    {"serial_no": "6", "name_contains": "Shekar Reddy"}
+  ],
+  "expected_conflicts": [
+    {"field_contains": "accused.age", "values_include": ["33", "32"]},
+    {"field_contains": "accused.name", "values_include_any": ["Aerrolla", "Errolla"]}
+  ],
+  "io_name_contains": "Shekar Reddy"
+}

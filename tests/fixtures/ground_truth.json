@@ -1,0 +1,20 @@
+{
+  "sample_01_digital_standard.pdf": {
+    "district": "Sample District",
+    "police_station": "Central PS",
+    "fir_number": "123/2024",
+    "charge_sheet_number": "CS-45/2024"
+  },
+  "sample_02_alternate_labels.pdf": {
+    "district": "Sample East",
+    "police_station": "Riverside",
+    "fir_number": "778/2023",
+    "charge_sheet_number": "CH-12/2024"
+  },
+  "sample_03_multipage.pdf": {
+    "district": "North Zone",
+    "police_station": "Hill View",
+    "fir_number": "55/2022",
+    "charge_sheet_number": "9/2023"
+  }
+}
