@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.logging_utils import audit
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.results_repository import ResultsRepository
 from app.schemas.api_responses import (
@@ -14,9 +17,18 @@ from app.schemas.api_responses import (
     VerifyRequest,
 )
 from app.schemas.document import DocumentStatus
-from app.security.auth import require_api_key
+from app.security.auth import Principal, require_api_key, require_role
 
 router = APIRouter(prefix="/api/v1/documents", tags=["results"])
+
+_READY = (DocumentStatus.COMPLETED.value, DocumentStatus.VERIFIED.value)
+
+
+def _get_live(repo: DocumentRepository, document_id: str):
+    doc = repo.get(document_id)
+    if not doc or doc.status == DocumentStatus.DELETED.value:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
 
 
 @router.get(
@@ -26,9 +38,7 @@ router = APIRouter(prefix="/api/v1/documents", tags=["results"])
 )
 def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsResponse:
     repo = DocumentRepository(db)
-    doc = repo.get(document_id)
-    if not doc or doc.status == DocumentStatus.DELETED.value:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = _get_live(repo, document_id)
     results = ResultsRepository(db).get(document_id)
     corrections = repo.get_corrections(document_id)
     if doc.status in (
@@ -36,16 +46,19 @@ def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsRespo
         DocumentStatus.QUEUED.value,
         DocumentStatus.PROCESSING.value,
     ):
-        return ResultsResponse(
-            document=repo.to_meta(doc),
-            results=results,
-            field_corrections=corrections,
-        )
+        # Previous results (if any) belong to an older run; don't present them as current
+        return ResultsResponse(document=repo.to_meta(doc), results=None, field_corrections=corrections)
     if doc.status == DocumentStatus.FAILED.value:
-        raise HTTPException(
-            status_code=422,
-            detail=doc.error_message or "Processing failed",
-        )
+        detail = {
+            "message": doc.error_message or "Processing failed",
+            "extraction_status": results.extraction_status.value if results else "failed",
+        }
+        if results is not None:
+            # Diagnostics only — no extracted values are returned for a failed extraction
+            detail["warnings"] = results.extraction_warnings
+            detail["stage_results"] = [s.model_dump() for s in results.stage_results]
+            detail["page_summaries"] = [p.model_dump() for p in results.page_summaries]
+        raise HTTPException(status_code=422, detail=detail)
     if results is None:
         raise HTTPException(status_code=404, detail="Results not available")
     return ResultsResponse(
@@ -55,50 +68,61 @@ def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsRespo
     )
 
 
+@router.get(
+    "/{document_id}/corrections",
+    dependencies=[Depends(require_api_key)],
+)
+def correction_history(document_id: str, db: Session = Depends(get_db)) -> List[dict]:
+    """Full audit trail of corrections and verification notes (oldest first)."""
+    repo = DocumentRepository(db)
+    _get_live(repo, document_id)
+    return repo.correction_history(document_id)
+
+
 @router.patch(
     "/{document_id}/fields",
     response_model=ResultsResponse,
-    dependencies=[Depends(require_api_key)],
 )
 def patch_fields(
     document_id: str,
     body: FieldCorrectionRequest,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(require_role("operator")),
 ) -> ResultsResponse:
     repo = DocumentRepository(db)
-    doc = repo.get(document_id)
-    if not doc or doc.status == DocumentStatus.DELETED.value:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if doc.status not in (
-        DocumentStatus.COMPLETED.value,
-        DocumentStatus.VERIFIED.value,
-    ):
+    doc = _get_live(repo, document_id)
+    if doc.status not in _READY:
         raise HTTPException(status_code=409, detail="Results not ready for correction")
+    results_repo = ResultsRepository(db)
+    data = results_repo.get(document_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Results not available")
+    fmap = data.field_map()
+    unknown = [c.canonical_name for c in body.corrections if c.canonical_name not in fmap]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown field(s): {', '.join(unknown[:20])}")
 
     corr_payload = [
         {
             "canonical_name": c.canonical_name,
             "corrected_value": c.corrected_value,
+            "original_value": None if fmap[c.canonical_name].original_value is None else str(fmap[c.canonical_name].original_value),
             "review_status": c.review_status.value,
             "notes": c.notes,
+            "reviewer": principal.name,
         }
         for c in body.corrections
     ]
     repo.add_corrections(document_id, corr_payload)
-    # Apply without overwriting original_value
-    applied = {
-        c["canonical_name"]: {
-            "corrected_value": c["corrected_value"],
-            "review_status": c["review_status"],
-            "notes": c.get("notes"),
-        }
-        for c in corr_payload
-    }
-    ResultsRepository(db).apply_corrections(document_id, applied)
-    results = ResultsRepository(db).get(document_id)
+    # Applied alongside, never overwriting original_value
+    results_repo.apply_corrections(document_id, {c["canonical_name"]: c for c in corr_payload})
+    if doc.status == DocumentStatus.VERIFIED.value:
+        # Editing verified results re-opens review
+        repo.update_status(document_id, DocumentStatus.COMPLETED, verified=False, requires_review=True)
+    audit("fields_corrected", document_id=document_id, count=len(corr_payload), user=principal.name)
     return ResultsResponse(
-        document=repo.to_meta(doc),
-        results=results,
+        document=repo.to_meta(repo.get(document_id)),
+        results=results_repo.get(document_id),
         field_corrections=repo.get_corrections(document_id),
     )
 
@@ -106,21 +130,16 @@ def patch_fields(
 @router.post(
     "/{document_id}/verify",
     response_model=ResultsResponse,
-    dependencies=[Depends(require_api_key)],
 )
 def verify_document(
     document_id: str,
     body: VerifyRequest,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(require_role("reviewer")),
 ) -> ResultsResponse:
     repo = DocumentRepository(db)
-    doc = repo.get(document_id)
-    if not doc or doc.status == DocumentStatus.DELETED.value:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if doc.status not in (
-        DocumentStatus.COMPLETED.value,
-        DocumentStatus.VERIFIED.value,
-    ):
+    doc = _get_live(repo, document_id)
+    if doc.status not in _READY:
         raise HTTPException(status_code=409, detail="Document not ready for verification")
     if body.verified and not (body.notes and str(body.notes).strip()):
         raise HTTPException(
@@ -128,7 +147,6 @@ def verify_document(
             detail="Verification notes are required before marking results verified",
         )
 
-    # Audit trail: store verification note as a correction-like record
     if body.notes:
         repo.add_corrections(
             document_id,
@@ -138,6 +156,7 @@ def verify_document(
                     "corrected_value": body.notes,
                     "review_status": "verified" if body.verified else "unreviewed",
                     "notes": "human_verification",
+                    "reviewer": principal.name,
                 }
             ],
         )
@@ -147,8 +166,10 @@ def verify_document(
         document_id,
         status,
         verified=body.verified,
+        verified_by=principal.name,
         requires_review=not body.verified,
     )
+    audit("verification", document_id=document_id, verified=body.verified, user=principal.name)
     doc = repo.get(document_id)
     return ResultsResponse(
         document=repo.to_meta(doc),

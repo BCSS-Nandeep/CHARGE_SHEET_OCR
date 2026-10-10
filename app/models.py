@@ -37,6 +37,7 @@ class DocumentRecord(Base):
     classification_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     requires_review: Mapped[bool] = mapped_column(Boolean, default=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     schema_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -78,8 +79,11 @@ class CorrectionRecord(Base):
     )
     canonical_name: Mapped[str] = mapped_column(String(256), nullable=False)
     corrected_value: Mapped[str] = mapped_column(Text, nullable=False)
+    # Extracted value the correction was made against (for safe re-application)
+    original_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     review_status: Mapped[str] = mapped_column(String(32), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewer: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     document: Mapped["DocumentRecord"] = relationship(back_populates="corrections")

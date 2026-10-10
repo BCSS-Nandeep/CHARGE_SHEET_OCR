@@ -18,6 +18,8 @@ env/
 # Data & uploads (sensitive)
 uploads/
 data/
+# Ground truth / reports for real documents contain personal data — never commit
+tests/fixtures/private/
 *.db
 *.sqlite
 *.sqlite3

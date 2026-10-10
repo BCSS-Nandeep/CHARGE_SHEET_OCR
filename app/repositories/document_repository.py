@@ -54,6 +54,7 @@ class DocumentRepository:
         requires_review: Optional[bool] = None,
         schema_version: Optional[str] = None,
         verified: Optional[bool] = None,
+        verified_by: Optional[str] = None,
     ) -> Optional[DocumentRecord]:
         doc = self.get(document_id)
         if not doc:
@@ -62,7 +63,7 @@ class DocumentRepository:
         doc.updated_at = datetime.utcnow()
         if error_message is not None:
             # Never store full document text in error fields
-            doc.error_message = error_message[:500]
+            doc.error_message = error_message[:500] or None
         if page_count is not None:
             doc.page_count = page_count
         if is_scanned is not None:
@@ -77,6 +78,7 @@ class DocumentRepository:
             doc.schema_version = schema_version
         if verified is not None:
             doc.verified = verified
+            doc.verified_by = verified_by if verified else None
         if status in (DocumentStatus.COMPLETED, DocumentStatus.FAILED, DocumentStatus.VERIFIED):
             doc.processed_at = datetime.utcnow()
         self.db.commit()
@@ -109,6 +111,13 @@ class DocumentRepository:
         )
         return total, rows
 
+    def list_by_status(self, statuses: List[DocumentStatus]) -> List[DocumentRecord]:
+        return list(
+            self.db.scalars(
+                select(DocumentRecord).where(DocumentRecord.status.in_([s.value for s in statuses]))
+            )
+        )
+
     def add_corrections(
         self,
         document_id: str,
@@ -120,26 +129,89 @@ class DocumentRepository:
                     document_id=document_id,
                     canonical_name=item["canonical_name"],
                     corrected_value=str(item["corrected_value"]),
+                    original_value=item.get("original_value"),
                     review_status=item.get("review_status", "corrected"),
                     notes=item.get("notes"),
+                    reviewer=item.get("reviewer"),
                 )
             )
         self.db.commit()
 
+    def _correction_rows(self, document_id: str) -> List[CorrectionRecord]:
+        return list(
+            self.db.scalars(
+                select(CorrectionRecord)
+                .where(CorrectionRecord.document_id == document_id)
+                .order_by(CorrectionRecord.id)
+            )
+        )
+
     def get_corrections(self, document_id: str) -> dict:
-        rows = self.db.scalars(
-            select(CorrectionRecord).where(CorrectionRecord.document_id == document_id)
-        ).all()
-        # Latest correction per field wins
+        """Latest correction per field (rows are ordered by insertion)."""
         out: dict = {}
-        for row in rows:
+        for row in self._correction_rows(document_id):
             out[row.canonical_name] = {
                 "corrected_value": row.corrected_value,
+                "original_value": row.original_value,
                 "review_status": row.review_status,
                 "notes": row.notes,
+                "reviewer": row.reviewer,
                 "created_at": row.created_at.isoformat(),
             }
         return out
+
+    def correction_history(self, document_id: str) -> List[dict]:
+        return [
+            {
+                "canonical_name": r.canonical_name,
+                "corrected_value": r.corrected_value,
+                "original_value": r.original_value,
+                "review_status": r.review_status,
+                "notes": r.notes,
+                "reviewer": r.reviewer,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in self._correction_rows(document_id)
+        ]
+
+    def reapply_corrections(self, document_id: str, data) -> Tuple[int, int]:
+        """Apply stored human corrections to a fresh extraction.
+
+        A correction is re-applied only when the field still exists and its
+        extracted value equals the value the reviewer corrected; otherwise the
+        source changed and the reviewer must look again. Returns (applied, skipped).
+        """
+        from app.schemas.charge_sheet import ReviewStatus
+
+        fmap = data.field_map()
+        applied = skipped = 0
+        for name, corr in self.get_corrections(document_id).items():
+            if name.startswith("_"):
+                continue
+            field = fmap.get(name)
+            if field is None or corr.get("original_value") is None or str(field.original_value) != corr["original_value"]:
+                skipped += 1
+                continue
+            field.corrected_value = corr["corrected_value"]
+            try:
+                field.review_status = ReviewStatus(corr["review_status"])
+            except ValueError:
+                field.review_status = ReviewStatus.CORRECTED
+            if corr.get("notes"):
+                field.notes = corr["notes"]
+            applied += 1
+        return applied, skipped
+
+    def purge_content(self, doc: DocumentRecord) -> None:
+        """Remove extracted data and corrections; keep a minimal tombstone row."""
+        if doc.result is not None:
+            self.db.delete(doc.result)
+        for c in list(doc.corrections):
+            self.db.delete(c)
+        doc.original_filename = "[purged]"
+        doc.error_message = None
+        doc.status = DocumentStatus.DELETED.value
+        doc.updated_at = datetime.utcnow()
 
     @staticmethod
     def to_meta(doc: DocumentRecord) -> DocumentMeta:
@@ -157,6 +229,7 @@ class DocumentRepository:
             classification_confidence=doc.classification_confidence,
             requires_review=doc.requires_review,
             verified=doc.verified,
+            verified_by=doc.verified_by,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
             processed_at=doc.processed_at,

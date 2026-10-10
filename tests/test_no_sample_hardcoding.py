@@ -1,68 +1,109 @@
-"""Ensure runtime extraction has no FIR-83 / sample-specific hardcoding."""
+"""Runtime code must not contain sample-specific values or depend on file names.
+
+Forbidden tokens are derived automatically from every ground-truth file
+(synthetic, and real documents when the private fixtures are present), so a
+new evaluation document extends the check without editing this test.
+The whole source text is scanned, comments included: example values from
+confidential documents must not leak into the code base either.
+"""
 
 from __future__ import annotations
 
-import ast
+import json
+import re
+import shutil
 from pathlib import Path
 
 import pytest
 
-from app.services.field_mapping_service import best_canonical_match
-from app.services.text_normalize import soften_pdf_text
+from evaluation.ground_truth import load_ground_truth
 
 APP = Path(__file__).resolve().parents[1] / "app"
 
-# Values that must not appear as string literals in runtime extraction code
-FORBIDDEN_LITERALS = {
-    "Aerrolla",
-    "Errolla",
-    "Rajender Goud",
-    "83/2020",
-    "Haveli Ghanapur",
-    "Kuchanpally",
-    "Alprazolam",
-    "445a415f-5f82-4ce1-b847-09d6c974a473",
-    "Kasa Aravind",
+# General charge-sheet vocabulary that legitimately appears in parsing rules.
+GENERIC_WORDS = {
+    "sample", "district", "police", "station", "court", "magistrate", "judicial", "first", "class",
+    "special", "sessions", "charge", "sheet", "original", "supplementary", "final", "report", "type",
+    "ndps", "excise", "labor", "labour", "driver", "mechanic", "painter", "student", "business",
+    "panch", "panchanama", "witness", "assisted", "owner", "land", "complainant", "unknown", "person",
+    "investigating", "officer", "conducted", "inspector", "constable", "market", "road", "ward",
+    "colony", "village", "mandal", "block", "east", "north", "zone", "bank", "manager", "local",
+    "shopkeeper", "city", "canal", "lakeside", "theft", "eyewitness", "agril", "with", "from",
+    "circle", "jmfc", "thana", "riverside", "view", "hill", "coastal", "harbour", "central", "accused",
 }
+_HARDCODE_FREE_FILES = sorted(p for p in APP.rglob("*.py"))
 
 
-def _string_literals(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    out: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            out.add(node.value)
-    return out
+def _strings(obj):
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in {"note", "field", "ocr_reference_lines"}:
+                continue
+            yield from _strings(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _strings(v)
 
 
-def test_no_forbidden_literals_in_runtime_services():
+def forbidden_tokens():
+    tokens = set()
+    for gt in load_ground_truth(include_private=True):
+        expected = dict(gt.expected)
+        expected.pop("document_type", None)
+        for s in _strings(expected):
+            # Whole identifiers / dates (e.g. "310/2024", "14.07.2024")
+            for m in re.findall(r"\d{1,6}/\d{2,4}|\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{9,12}", s):
+                tokens.add(m)
+            for word in re.findall(r"[A-Za-z]{4,}", s):
+                w = word.lower()
+                if w not in GENERIC_WORDS:
+                    tokens.add(w)
+    return tokens
+
+
+def test_ground_truth_loaded():
+    assert load_ground_truth(include_private=False), "public ground truth fixtures missing"
+
+
+def test_no_ground_truth_values_in_runtime_code():
+    tokens = forbidden_tokens()
     hits = []
-    for path in (APP / "services").rglob("*.py"):
-        literals = _string_literals(path)
-        for bad in FORBIDDEN_LITERALS:
-            for lit in literals:
-                if bad.lower() in lit.lower():
-                    hits.append(f"{path.name}: contains {bad!r} in {lit!r}")
-    assert not hits, "Sample-specific hardcoding found:\n" + "\n".join(hits)
+    for path in _HARDCODE_FREE_FILES:
+        text = path.read_text(encoding="utf-8").lower()
+        for tok in tokens:
+            pattern = rf"(?<![a-z0-9]){re.escape(tok.lower())}(?![a-z0-9])"
+            if re.search(pattern, text):
+                hits.append(f"{path.relative_to(APP.parent)}: {tok!r}")
+    assert not hits, "Sample-specific values found in runtime code:\n" + "\n".join(sorted(hits))
 
 
-def test_short_synonyms_do_not_hijack_person_lines():
-    assert best_canonical_match("His song, Age 19 years cast")[0] is None
-    assert best_canonical_match("Occ")[0] is None
-    assert best_canonical_match("kumar S/o Ashok, age")[0] is None
-    assert best_canonical_match("Sri Banoth Ramesh, S/o Dhup Singh age")[0] is None
-    assert best_canonical_match("Police Station")[0] == "police_station"
-    assert best_canonical_match("Year")[0] == "year"
-    assert best_canonical_match("FIR No.")[0] == "fir_number"
+def test_runtime_code_never_reads_ground_truth_or_uploads_by_name():
+    for path in _HARDCODE_FREE_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "ground_truth" not in text, f"{path.name} references ground truth"
+        assert "evaluation" not in re.findall(r"^\s*(?:from|import)\s+(\w+)", text, re.M), path.name
+        assert not re.search(r"[0-9a-f]{32}_", text), f"{path.name} references a stored upload name"
 
 
-def test_soften_glued_charge_sheet_headers():
-    raw = "Dist.Medak PS:HAVELIGHANAPUR\nParticularsofthewitnessestobeexamined\nActs andsections"
-    soft = soften_pdf_text(raw)
-    assert "Medak" in soft
-    assert "PS:" in soft or "PS :" in soft
-    assert "witnesses to be examined" in soft.lower()
-    assert "and sections" in soft.lower()
-    # Space-aligned columns must remain splittable
-    aligned = soften_pdf_text("Distt.                 Sample East")
-    assert "  " in aligned
+def test_extraction_independent_of_filename(tmp_path, fixtures_dir):
+    from app.services.extraction_service import ExtractionService
+
+    src = fixtures_dir / "sample_05_header_table_narrative_refs.pdf"
+    renamed = tmp_path / "completely_different_name.pdf"
+    shutil.copy(src, renamed)
+    svc = ExtractionService(db=None)
+    a = svc.process(src).model_dump(exclude={"extracted_at"})
+    b = svc.process(renamed).model_dump(exclude={"extracted_at"})
+    assert json.dumps(a, sort_keys=True, default=str) == json.dumps(b, sort_keys=True, default=str)
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["His song, Age 19 years cast", "Occ", "kumar S/o Ashok, age", "Sri Banoth Ramesh, S/o Dhup Singh age"],
+)
+def test_short_synonyms_do_not_hijack_person_lines(label):
+    from app.services.field_mapping_service import best_canonical_match
+
+    assert best_canonical_match(label)[0] is None

@@ -18,6 +18,10 @@ class HealthResponse(BaseModel):
     offline_mode: bool
     database: str
     ocr_available: bool
+    ocr_engine: str = "none"
+    ocr_error: Optional[str] = None
+    auth_enabled: bool = False
+    auth_misconfigured: bool = False
     llm_enabled: bool
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

@@ -58,9 +58,9 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
     "fir_date": [
         "fir date",
         "date of fir",
+        "fir dated",
         "date of registration",
         "registered on",
-        "date of occurrence",
         "दिनांक",
     ],
     "charge_sheet_number": [
@@ -77,10 +77,12 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "date of submission",
         "submitted on",
         "charge sheet date",
+        "charge sheet dt",
+        "charge sheet dated",
         "date of charge sheet",
         "date of final report",
+        "final report date",
         "forwarded on",
-        "dated",
         "date of charge-sheet",
     ],
     "court_name": [
@@ -103,6 +105,7 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
     "final_report_type": [
         "final report type",
         "type of final report",
+        "type of final result",
         "nature of final report",
         "type of report",
         "charge sheet / final report",
@@ -110,12 +113,19 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
     "supplementary_or_original": [
         "original / supplementary",
         "original or supplementary",
+        "supplementary or original",
+        "if supplementary or original",
         "supplementary",
         "original charge sheet",
         "whether original or supplementary",
     ],
     "acts_and_sections": [
+        "act",
+        "acts",
         "sections",
+        "sections of law",
+        "section of law",
+        "sections of law & act",
         "u/s",
         "under section",
         "acts and sections",
@@ -130,6 +140,9 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
     "complainant_name": [
         "complainant",
         "name of complainant",
+        "name of the complainant",
+        "name of complainant or informant",
+        "name of the complainant & father's name",
         "complainant's name",
         "complaintant",
         "शिकायतकर्ता",
@@ -152,6 +165,8 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "name and rank of io",
         "name of the i.os",
         "name of the io",
+        "name(s) of the i.o.(s)",
+        "names of the ios",
     ],
     "io_rank": [
         "rank of io",
@@ -184,6 +199,11 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "exhibits",
         "articles seized",
         "list of property",
+        "details of property",
+        "details of the property",
+        "details of properties",
+        "property recovered",
+        "property deposited",
         "seizure",
     ],
     "lab_results": [
@@ -193,6 +213,7 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "forensic",
         "chemical analysis",
         "fsl report",
+        "result of laboratory analysis",
     ],
     "brief_facts": [
         "brief facts",
@@ -217,6 +238,49 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "prayer",
     ],
 }
+
+# Recognised form labels that have no schema field. Matching them keeps the
+# row out of a wrong canonical field; the value is preserved as unmapped.
+FORM_LABEL_HINTS: Dict[str, List[str]] = {
+    "final_report_if_not_charge_sheet": [
+        "if final report",
+        "if final report un-occurred",
+        "if final report result",
+        "if final report false",
+    ],
+    "complainant_informed_date": [
+        "date on which the complainant was informed",
+        "date on which the complainant was informed of the final result",
+        "date on which the complainant was informed about the final result",
+        "date on which the complainant was informed of the result",
+    ],
+    "false_report_action": [
+        "final report is false",
+        "if the fr is false",
+        "if fr is false",
+        "action taken / to be taken",
+    ],
+}
+
+# Headings that open a list of persons, matched on compact (letters-only) text.
+# Order matters: "not charge sheeted" must be tested before plain "accused".
+LIST_HEADING_PATTERNS = [
+    ("accused_not_charged", r"accused.*not.*charge|notcharge.*accused"),
+    ("accused_charged", r"accused"),
+    ("witnesses", r"witness"),
+]
+
+# Phrases that mark the start of the investigation narrative (compact text).
+NARRATIVE_MARKERS = [
+    r"^(?:\d{1,2})?(?:the)?brieffacts",
+    r"^(?:\d{1,2})?gistofthecase",
+    r"factsofthecase(?:are|is)that",
+    r"^honblesir",
+    r"^honou?redsir",
+    r"^respectedsir",
+    r"^thisisacaseof",
+    r"^itis(?:humbly)?submitted",
+]
 
 DOCUMENT_TYPE_KEYWORDS = [
     "charge sheet",

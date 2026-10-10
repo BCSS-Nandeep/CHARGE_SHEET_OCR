@@ -43,6 +43,7 @@ class DocumentMeta(BaseModel):
     classification_confidence: Optional[float] = None
     requires_review: bool = True
     verified: bool = False
+    verified_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     processed_at: Optional[datetime] = None

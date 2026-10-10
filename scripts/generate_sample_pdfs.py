@@ -185,14 +185,95 @@ def make_image_like_scanned(path: Path) -> None:
     tmp.unlink(missing_ok=True)
 
 
-def main() -> None:
+def make_header_table_with_narrative_refs(path: Path) -> None:
+    """Unruled header table, generic 'Date' label, unrelated FIR numbers in the narrative,
+    an age contradiction, a section alteration and a duplicated witness entry."""
+    c = canvas.Canvas(str(path), pagesize=A4, invariant=1)
+    _page(c, "FINAL REPORT (Under Section 193 BNSS)")
+    c.setFont("Helvetica-Bold", 10)
+    for x, label in ((50, "DISTRICT"), (150, "POLICE STATION"), (290, "YEAR"), (360, "FIR NO."), (460, "DATE")):
+        c.drawString(x, 770, label)
+    c.setFont("Helvetica", 10)
+    for x, value in ((50, "Eastvale"), (150, "Lakeside"), (290, "2024"), (360, "310/2024"), (460, "14.07.2024")):
+        c.drawString(x, 755, value)
+    lines = [
+        "1. Charge Sheet No.: 41/2024",
+        "2. Date: 30.09.2024",
+        "3. Acts and Sections: 303(2), 317(2) BNS",
+        "4. Type of final report: Charge Sheet",
+        "5. Original / Supplementary: Original",
+        "6. Name of the I.O.: Inspector R. Varma, Lakeside PS",
+        "7. Complainant: Meera Iyer",
+        "8. Particulars of the accused persons charge sheeted:",
+        "A-1) Ravi Teja S/o Prakash, Age: 29, Occ: Driver, R/o Ward 12, Eastvale. Ph: 9876501234",
+        "A-2) Salim Khan S/o Yusuf Khan, Age: 34, Occ: Mechanic, R/o Old Market, Eastvale",
+        "(A-1 & A-2 were arrested on 20.07.2024 and remanded)",
+        "9. List of witnesses:",
+        "LW-1 Meera Iyer W/o Arun Iyer, Age: 41, R/o Lakeside Colony - Complainant",
+        "LW-2 Joseph Dsouza S/o Peter, Age: 52, R/o Lakeside - Eye witness",
+        "LW-3 Joseph Dsouza S/o Peter, Age: 52, R/o Lakeside - Eye witness",
+        "LW-4 Inspector R. Varma, Lakeside PS - Investigating officer",
+        "10. Brief facts of the case:",
+        "On 14.07.2024 the complainant reported the theft of her two-wheeler from Lakeside market.",
+        "During investigation the accused Ravi Teja S/o Prakash, age 31, was apprehended with the",
+        "vehicle. He is also an accused in Cr.No.122/2023 of Hillside PS and FIR No. 87/2022 of",
+        "Eastvale PS. A case was registered vide FIR No. 310/2024 u/s 303(2) BNS and the section",
+        "was later altered to u/s 303(2), 317(2) BNS. Notice u/s 35(3) BNSS was served on A-2.",
+        "Hence it is prayed to try the accused for offences punishable u/s 303(2), 317(2) BNS.",
+    ]
+    y = 725
+    for line in lines:
+        c.drawString(50, y, line)
+        y -= 17
+    c.showPage()
+    c.save()
+
+
+def make_missing_fields_and_traps(path: Path) -> None:
+    """Missing district, compound 'FIR No. & Date' label, numbers that must not become
+    sections (phone, age, register serial)."""
+    c = canvas.Canvas(str(path), pagesize=A4, invariant=1)
+    _page(c, "POLICE REPORT U/S 173 Cr.P.C.")
+    lines = [
+        "Name of Police Station : Riverbend",
+        "FIR No. & Date : 19/2025 dt. 03-01-2025",
+        "Sections of law : 379 IPC",
+        "Name of IO : SI P. Kumar",
+        "Accused:",
+        "1. Unknown person (absconding)",
+        "Witnesses:",
+        "1. B. Rao, PC-1102, Riverbend PS",
+        "2. Lata Devi W/o Mohan, Age: 38, R/o Canal Road",
+        "Brief facts: The complainant can be reached on 9123456789. A man aged about 45 years",
+        "removed the motorcycle entered at serial no. 302 of the property register on 03-01-2025.",
+        "Despite efforts the accused could not be traced and is shown as absconding.",
+    ]
+    y = 770
+    for line in lines:
+        c.drawString(50, y, line)
+        y -= 18
+    c.showPage()
+    c.save()
+
+
+def main(only_missing: bool = False) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    make_digital_standard(OUT / "sample_01_digital_standard.pdf")
-    make_alternate_labels(OUT / "sample_02_alternate_labels.pdf")
-    make_multipage_sparse(OUT / "sample_03_multipage.pdf")
-    make_image_like_scanned(OUT / "sample_04_scanned_image.pdf")
+    samples = [
+        ("sample_01_digital_standard.pdf", make_digital_standard),
+        ("sample_02_alternate_labels.pdf", make_alternate_labels),
+        ("sample_03_multipage.pdf", make_multipage_sparse),
+        ("sample_04_scanned_image.pdf", make_image_like_scanned),
+        ("sample_05_header_table_narrative_refs.pdf", make_header_table_with_narrative_refs),
+        ("sample_06_missing_fields_and_traps.pdf", make_missing_fields_and_traps),
+    ]
+    for name, fn in samples:
+        if only_missing and (OUT / name).exists():
+            continue
+        fn(OUT / name)
     print(f"Wrote sample PDFs to {OUT}")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    main(only_missing="--only-missing" in sys.argv)

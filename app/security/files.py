@@ -26,8 +26,10 @@ def safe_store_filename(original_name: str) -> str:
 def resolve_under(root: Path, filename: str) -> Path:
     """Resolve path and ensure it stays under root (no traversal)."""
     root_resolved = root.resolve()
-    candidate = (root_resolved / Path(filename).name).resolve()
-    if not str(candidate).startswith(str(root_resolved)):
+    name = Path(filename).name
+    candidate = (root_resolved / name).resolve()
+    # parent check, not a string prefix ('uploads2' would pass startswith('uploads'))
+    if not name or name in {".", ".."} or candidate.parent != root_resolved:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid file path",
@@ -49,14 +51,24 @@ async def validate_pdf_upload(file: UploadFile, settings: Settings) -> bytes:
     ):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
-    data = await file.read()
+    # Read in chunks so an oversized upload is rejected without buffering it all
+    chunks = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > settings.max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum size of {settings.max_upload_size_mb} MB",
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(data) > settings.max_upload_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds maximum size of {settings.max_upload_size_mb} MB",
-        )
-    if not data.lstrip().startswith(PDF_MAGIC):
+    # PDF spec allows the header within the first 1024 bytes
+    if PDF_MAGIC not in data[:1024]:
         raise HTTPException(status_code=400, detail="File is not a valid PDF")
     return data

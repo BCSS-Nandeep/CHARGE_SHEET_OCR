@@ -11,10 +11,26 @@ from app.config import get_settings
 from app.db import session_scope
 from app.logging_utils import audit, get_logger
 from app.models import DocumentRecord
+from app.repositories.document_repository import DocumentRepository
 from app.schemas.document import DocumentStatus
 from app.security.files import resolve_under
 
 logger = get_logger(__name__)
+
+
+def delete_document_content(repo: DocumentRepository, doc: DocumentRecord, upload_dir: Path) -> None:
+    """Delete the stored PDF, extracted results and corrections.
+
+    A tombstone row (id, timestamps, status=deleted) is kept for the audit
+    trail; it holds no document content or personal data.
+    """
+    try:
+        path = resolve_under(upload_dir, doc.stored_filename)
+        if path.exists():
+            path.unlink()
+    except Exception as exc:
+        logger.warning("delete_file_failed document_id=%s err=%s", doc.id, type(exc).__name__)
+    repo.purge_content(doc)
 
 
 def purge_expired() -> int:
@@ -32,18 +48,10 @@ def purge_expired() -> int:
                 )
             )
         )
+        repo = DocumentRepository(db)
         for doc in rows:
-            try:
-                path = resolve_under(settings.upload_dir, doc.stored_filename)
-                if path.exists():
-                    path.unlink()
-            except Exception:
-                pass
-            doc.status = DocumentStatus.DELETED.value
-            doc.updated_at = datetime.utcnow()
+            delete_document_content(repo, doc, settings.upload_dir)
             deleted += 1
-        # cascade deletes results via ORM relationships when we delete rows;
-        # here we soft-delete to keep audit trail
     if deleted:
         audit("retention_purge", count=deleted)
     return deleted

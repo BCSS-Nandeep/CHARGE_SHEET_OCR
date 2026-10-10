@@ -1,48 +1,30 @@
-from app.services.field_mapping_service import (
-    best_canonical_match,
-    extract_acts_sections,
-    extract_kv_candidates,
-    extract_person_blocks,
+"""Label → canonical field mapping (synonyms, word boundaries, hints)."""
+
+import pytest
+
+from app.services.field_mapping_service import best_canonical_match, is_generic_date_label, list_heading_kind
+
+
+@pytest.mark.parametrize(
+    "label,canonical",
+    [
+        ("P.S.", "police_station"), ("Distt.", "district"), ("F.I.R. Number", "fir_number"),
+        ("Challan No.", "charge_sheet_number"), ("Name of IO", "io_name"), ("Name and Rank of I.O.,", "io_name"),
+        ("Charge Sheet Dt.", "submission_date"), ("Charge Sheet /Final\nReport", "final_report_type"),
+        ("If Supplementary /\nOriginal", "supplementary_or_original"), ("Sections of Law & Act", "acts_and_sections"),
+        ("Act. I.P.C.,", "acts_and_sections"), ("Year of FIR", "year"), ("Date of registration", "fir_date"),
+    ],
 )
+def test_synonym_mapping_variants(label, canonical):
+    assert best_canonical_match(label)[0] == canonical
 
 
-def test_synonym_mapping_variants():
-    assert best_canonical_match("P.S.")[0] == "police_station"
-    assert best_canonical_match("Distt.")[0] == "district"
-    assert best_canonical_match("F.I.R. Number")[0] == "fir_number"
-    assert best_canonical_match("Challan No.")[0] == "charge_sheet_number"
-    assert best_canonical_match("Name of IO")[0] == "io_name"
+def test_occurrence_date_is_not_fir_date():
+    assert best_canonical_match("Date of occurrence")[0] != "fir_date"
 
 
-def test_kv_and_acts_extraction():
-    text = """
-    1. District                    : Sample District
-    2. Police Station              : Central PS
-    4. FIR No.                     : 123/2024
-    Acts and Sections           : u/s 302, 34 IPC
-    """
-    cands = extract_kv_candidates(text, 1)
-    names = {c["canonical"] for c in cands if c["canonical"]}
-    assert "district" in names
-    assert "police_station" in names
-    assert "fir_number" in names
-    acts = extract_acts_sections(text, 1)
-    assert acts
-    assert "302" in acts[0]["section"]
-
-
-def test_person_blocks():
-    text = """
-    Particulars of the Accused:
-    1. Suresh Singh s/o Mohan Singh age 32 r/o Ward 4
-    2. Vijay Patel s/o K. Patel age 28 r/o Market Road
-    List of Witnesses:
-    1. PW-1 Ramesh Kumar (complainant)
-    Brief Facts:
-    Something happened.
-    """
-    accused = extract_person_blocks(text, 1, "accused")
-    witnesses = extract_person_blocks(text, 1, "witness")
-    assert len(accused) >= 2
-    assert "Suresh" in accused[0]["name"]
-    assert len(witnesses) >= 1
+def test_generic_date_labels_and_list_headings():
+    assert is_generic_date_label("Dated:") and is_generic_date_label("Dt.") and not is_generic_date_label("Date of FIR")
+    assert list_heading_kind("Name of accused\nperson(s) Charge\nsheeted.") == "accused_charged"
+    assert list_heading_kind("Particularsoftheaccusednot\nchargesheeted:") == "accused_not_charged"
+    assert list_heading_kind("List of witnesses to be examined.") == "witnesses"

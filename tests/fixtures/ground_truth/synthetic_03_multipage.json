@@ -1,0 +1,33 @@
+{
+  "document_id": "synthetic_03_multipage",
+  "description": "Sparse 3-page layout: case fields p1, accused p2, witnesses + acts + facts p3; no FIR date",
+  "layout": "native-text",
+  "source": {"fixture": "tests/fixtures/sample_03_multipage.pdf"},
+  "requires_ocr": false,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_multipage_sparse).",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": "North Zone",
+      "police_station": "Hill View",
+      "fir_number": "55/2022",
+      "fir_date": null,
+      "charge_sheet_number": "9/2023",
+      "court_name": "JMFC North"
+    },
+    "legal_sections": [
+      {"act": "IPC", "section": "379"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Karan Mehta"},
+      {"serial_no": "2", "name": "Neha Shah"},
+      {"serial_no": "3", "name": "Unknown person"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "Local shopkeeper"}
+    ],
+    "investigating_officers": [],
+    "related_case_references": [],
+    "conflicts": []
+  }
+}

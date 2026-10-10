@@ -1,0 +1,40 @@
+{
+  "document_id": "synthetic_05_header_table_narrative_refs",
+  "description": "Unruled header table (labels row over values row), generic 'Date' label, unrelated FIR numbers in narrative, age contradiction, section alteration, BNS/BNSS, inline witness roles, duplicated witness entry",
+  "layout": "native-text",
+  "source": {"fixture": "tests/fixtures/sample_05_header_table_narrative_refs.pdf"},
+  "requires_ocr": false,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_header_table_with_narrative_refs). Written after the parser rewrite by the same author, so this is not a blind test.",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": "Eastvale",
+      "police_station": "Lakeside",
+      "year": "2024",
+      "fir_number": "310/2024",
+      "fir_date": "14.07.2024",
+      "charge_sheet_number": "41/2024",
+      "submission_date": "30.09.2024",
+      "final_report_type": "Charge Sheet",
+      "supplementary_or_original": "Original"
+    },
+    "legal_sections": [
+      {"act": "BNS", "section": "303(2)"},
+      {"act": "BNS", "section": "317(2)"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Ravi Teja", "parent_or_spouse": "Prakash", "age": "29", "occupation": "Driver", "address_contains": "Ward 12", "contact": "9876501234"},
+      {"serial_no": "2", "name": "Salim Khan", "parent_or_spouse": "Yusuf Khan", "age": "34", "occupation": "Mechanic", "address_contains": "Old Market"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "Meera Iyer", "parent_or_spouse": "Arun Iyer", "age": "41", "role_contains": "Complainant"},
+      {"serial_no": "2", "name": "Joseph Dsouza", "parent_or_spouse": "Peter", "age": "52", "role_contains": "Eye witness"},
+      {"serial_no": "4", "name": "R. Varma", "role_contains": "Investigating officer"}
+    ],
+    "investigating_officers": [{"name": "R. Varma"}],
+    "related_case_references": ["122/2023", "87/2022"],
+    "conflicts": [
+      {"field": "accused[0].age", "values": ["29", "31"]}
+    ]
+  }
+}

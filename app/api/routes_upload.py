@@ -14,7 +14,7 @@ from app.logging_utils import audit
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.api_responses import ProcessingAcceptedResponse
 from app.schemas.document import DocumentStatus
-from app.security.auth import require_api_key
+from app.security.auth import Principal, require_role
 from app.security.files import resolve_under, safe_store_filename, validate_pdf_upload
 from app.services.processing_service import enqueue_processing
 
@@ -24,13 +24,13 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 @router.post(
     "/upload",
     response_model=ProcessingAcceptedResponse,
-    dependencies=[Depends(require_api_key)],
     status_code=202,
 )
 async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    principal: Principal = Depends(require_role("operator")),
 ) -> ProcessingAcceptedResponse:
     data = await validate_pdf_upload(file, settings)
     stored = safe_store_filename(file.filename or "document.pdf")
@@ -47,7 +47,7 @@ async def upload_document(
         size_bytes=len(data),
     )
     repo.update_status(doc.id, DocumentStatus.QUEUED)
-    audit("upload_accepted", document_id=doc.id, size_bytes=len(data))
+    audit("upload_accepted", document_id=doc.id, size_bytes=len(data), user=principal.name)
     enqueue_processing(doc.id)
 
     return ProcessingAcceptedResponse(

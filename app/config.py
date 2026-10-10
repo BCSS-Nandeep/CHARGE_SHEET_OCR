@@ -30,15 +30,21 @@ class Settings(BaseSettings):
 
     upload_dir: Path = BASE_DIR / "uploads"
     max_upload_size_mb: int = 25
+    max_pages: int = 200
     retention_days: int = 90
 
     api_key: str = "change-me-to-a-long-random-secret"
+    # Optional named keys with roles: "alice:<key>:reviewer;ops:<key>:operator".
+    # Roles: viewer < operator < reviewer < admin. API_KEY maps to user "default" (admin).
+    api_keys: str = ""
     api_key_header: str = "X-API-Key"
     enable_auth: bool = False
     cors_origins: str = "http://127.0.0.1:8000,http://localhost:8000"
 
     offline_mode: bool = True
     allow_external_network: bool = False
+    # Hostnames the offline guard may connect to (e.g. a private Postgres host)
+    network_allowlist: str = ""
     disable_telemetry: bool = True
     llm_enabled: bool = False
     llm_base_url: str = ""
@@ -49,9 +55,19 @@ class Settings(BaseSettings):
     ocr_lang: str = "en"
     ocr_min_text_chars: int = 40
     ocr_dpi: int = 200
+    # Paddle 3.x oneDNN kernels crash on some CPUs/models
+    # ("ConvertPirAttribute2RuntimeAttribute not support"); off by default.
+    ocr_enable_mkldnn: bool = False
+    # Explicit path to tesseract.exe when it is not on PATH.
+    tesseract_cmd: str = ""
+
+    # /docs and /redoc make the *browser* load Swagger/ReDoc assets from cdn.jsdelivr.net.
+    # Disable on air-gapped networks.
+    api_docs_enabled: bool = True
 
     async_processing: bool = True
-    processing_timeout_seconds: int = 300
+    # OCR on CPU takes ~1 min/page; past this budget remaining pages are skipped (partial)
+    processing_timeout_seconds: int = 900
     log_level: str = "INFO"
     log_pii: bool = False
 

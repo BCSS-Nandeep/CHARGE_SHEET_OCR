@@ -1,128 +1,131 @@
 # Charge Sheet PDF Extraction Service
 
-Standalone **local-only** FastAPI service with an HTML UI for uploading charge-sheet PDFs, extracting text (PyMuPDF + optional local PaddleOCR), mapping fields to a versioned schema without hardcoded per-template parsers, validating with Pydantic, and exposing results over a REST API.
+Standalone **local-only** FastAPI service with an HTML UI for uploading charge-sheet PDFs, extracting text
+(PyMuPDF for text-layer PDFs, local PaddleOCR / Tesseract for scans), mapping fields to a versioned schema
+without per-template parsers, validating, flagging source conflicts, and exposing results over a REST API.
 
-> **Security:** Designed for confidential police data. External AI APIs are disabled by default. See [docs/SECURITY.md](docs/SECURITY.md).
+> **Security:** designed for confidential police data. No document content leaves the host. See
+> [docs/SECURITY.md](docs/SECURITY.md). Audit findings and design notes: [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md).
 
 ## Features
 
-- Upload digital or scanned multi-page PDFs (UI + API)
-- Template-independent structure detection and synonym-based field mapping
-- Traceable fields: original label/value, normalized value, page, confidence, validation/review status
-- Corrections stored without overwriting originals
-- Async processing with status polling
-- SQLite (default) or PostgreSQL
-- API key auth, CORS allowlist, upload limits, retention purge, outbound network guard
+- Digital and scanned multi-page PDFs (UI + API); OCR runs locally, per page, with honest failure reporting
+- Layout-aware parsing: ruled form tables, OCR'd tables rebuilt from text-box geometry, header tables
+  (label row over value row), `Label: value` / space-aligned text layouts, glued (space-less) PDF exports
+- Form section vs. narrative separation: case identifiers come only from the form; other FIR numbers in the
+  narrative are kept as *related case references*
+- Structured accused / witnesses / investigating officers (name, parentage, age, occupation, address,
+  contact, ID, role, arrest status) with source page and source text for every value
+- Legal provisions tagged as charged / registered / altered / procedural / reference
+- Conflicts in the source (e.g. two different ages for one accused) are recorded and never auto-resolved
+- Separate statuses: extraction (`complete` / `partial` / `failed`), validation (`valid`, `uncertain`,
+  `invalid`, `missing`, `conflicting`), review (`unreviewed`, `corrected`, `verified`)
+- Corrections stored separately with the extracted value they replaced, the reviewer and an audit trail;
+  re-applied after reprocessing only when the source value is unchanged
+- Role-based API keys; verification requires an authenticated reviewer and notes
+- Retention purge and on-demand deletion remove the PDF, extracted data and corrections
 
-## Quick start
+## Quick start (Windows PowerShell)
 
 ```powershell
 cd C:\Users\Dell\Desktop\CHARGE_SHEET_OCR
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env
-# Edit .env — set a strong API_KEY
-
+copy .env.example .env      # then edit .env
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open:
+- UI: http://127.0.0.1:8000/  ·  History: http://127.0.0.1:8000/history
+- API docs: http://127.0.0.1:8000/docs (disable with `API_DOCS_ENABLED=false` on air-gapped networks —
+  the Swagger page loads its scripts from cdn.jsdelivr.net in the browser)
 
-- UI: http://127.0.0.1:8000/
-- Swagger: http://127.0.0.1:8000/docs
+### Authentication
 
-Auth is **off by default** for local use (`ENABLE_AUTH=false`). Set `ENABLE_AUTH=true` and an `API_KEY` when exposing the service on a shared network.
+| Mode | Behaviour |
+|---|---|
+| `ENABLE_AUTH=false` (default) | Only loopback clients (127.0.0.1) are served, as an unauthenticated *operator*: upload, view, correct, reprocess. **Results cannot be marked verified.** |
+| `ENABLE_AUTH=true` | Every API call needs a key in the `API_KEY_HEADER` header (default `X-API-Key`). |
 
-### Local OCR for scanned PDFs (required for image-only uploads)
+Keys: `API_KEY` (user `default`, role admin) and/or `API_KEYS=name:key:role;...` with roles
+`viewer < operator < reviewer < admin`. Keys must be at least 16 characters; the example values
+(`change-me-to-a-long-random-secret`, `dev-local-api-key-change-me`) are refused. Generate one with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`. In the UI, paste the key into the
+*API key* box (kept for the browser tab only).
 
-Scanned PDFs produce empty results until a **local** OCR engine is installed. The service does not call cloud OCR.
+### Local OCR for scanned PDFs
 
-**Option A — PaddleOCR (preferred):**
+Scanned PDFs need a local OCR engine; without one they are reported as **failed** (`OCR_REQUIRED`),
+never as an empty successful extraction. `GET /health` shows `ocr_available`, `ocr_engine` and any engine error.
+
+- **PaddleOCR (preferred):** `pip install paddlepaddle==3.3.1 paddleocr==3.7.0`, then run one OCR job on a
+  controlled network so the PP-OCR models are cached under `%USERPROFILE%\.paddlex\official_models`.
+  At runtime downloads and model-hoster probes are disabled/blocked. Keep `OCR_ENABLE_MKLDNN=false`: Paddle
+  3.x's oneDNN kernels fail on this CPU (`ConvertPirAttribute2RuntimeAttribute not support`).
+  CPU speed is roughly one minute per page at 200 DPI.
+- **Tesseract (fallback):** install the Tesseract binary *and* `pip install pytesseract`; set `TESSERACT_CMD`
+  if `tesseract.exe` is not on PATH. The Python wrapper alone is not an OCR engine.
+
+## API
+
 ```powershell
-pip install paddlepaddle paddleocr
+# Windows PowerShell 5.1 has no Invoke-RestMethod -Form; use curl.exe
+$K = "<your api key>"
+curl.exe -s -H "X-API-Key: $K" -F "file=@C:\path\charge_sheet.pdf;type=application/pdf" http://127.0.0.1:8000/api/v1/documents/upload
+curl.exe -s -H "X-API-Key: $K" http://127.0.0.1:8000/api/v1/documents/<id>
+curl.exe -s -H "X-API-Key: $K" http://127.0.0.1:8000/api/v1/documents/<id>/results
 ```
 
-**Option B — Tesseract (fallback):**
-Install [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) for Windows, then:
-```powershell
-pip install pytesseract
-```
+| Method | Path | Role | Purpose |
+|---|---|---|---|
+| GET | `/health` | — | Health, OCR engine, auth configuration |
+| POST | `/api/v1/documents/upload` | operator | Upload a PDF (202, processed asynchronously) |
+| GET | `/api/v1/documents` | viewer | List documents |
+| GET | `/api/v1/documents/{id}` | viewer | Metadata / processing status |
+| GET | `/api/v1/documents/{id}/results` | viewer | Structured extraction. `422` with diagnostics (stages, pages, warnings) when extraction failed; `results: null` while processing |
+| GET | `/api/v1/documents/{id}/source` | viewer | Original PDF |
+| GET | `/api/v1/documents/{id}/corrections` | viewer | Correction / verification audit trail |
+| PATCH | `/api/v1/documents/{id}/fields` | operator | Corrections by `canonical_name` (unknown names → 400) |
+| POST | `/api/v1/documents/{id}/verify` | reviewer | Mark verified (notes required) |
+| POST | `/api/v1/documents/{id}/reprocess` | operator | Re-run extraction (resets verification) |
+| DELETE | `/api/v1/documents/{id}` | admin | Delete PDF, results and corrections |
+| GET | `/api/v1/templates` | viewer | Structural fingerprints seen |
 
-Keep `OCR_ENABLED=true`. Prefetch models on a controlled network, then run offline. Check readiness via `GET /health` → `ocr_available`.
-
-## Sample PDFs
-
-No production charge sheets are bundled. Generate four synthetic layout variants:
-
-```powershell
-python scripts\generate_sample_pdfs.py
-```
-
-Files land in `tests/fixtures/`.
-
-## API examples
+## Tests and evaluation
 
 ```powershell
-$H = @{ "X-API-Key" = "dev-local-api-key-change-me" }
-
-# Health (no auth)
-Invoke-RestMethod http://127.0.0.1:8000/health
-
-# Upload
-$r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/documents/upload `
-  -Headers $H -Form @{ file = Get-Item .\tests\fixtures\sample_01_digital_standard.pdf }
-$r.document_id
-
-# Poll status
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/documents/$($r.document_id) -Headers $H
-
-# Results
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/documents/$($r.document_id)/results -Headers $H
-```
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Health / readiness |
-| POST | `/api/v1/documents/upload` | Upload PDF |
-| GET | `/api/v1/documents` | List documents |
-| GET | `/api/v1/documents/{id}` | Metadata / status |
-| GET | `/api/v1/documents/{id}/results` | Structured extraction |
-| GET | `/api/v1/documents/{id}/source` | Original PDF |
-| POST | `/api/v1/documents/{id}/reprocess` | Retry |
-| PATCH | `/api/v1/documents/{id}/fields` | Corrections |
-| POST | `/api/v1/documents/{id}/verify` | Mark verified |
-| GET | `/api/v1/templates` | Template fingerprints |
-
-## Tests
-
-```powershell
-pytest -q
+pytest -q                               # unit + API + ground-truth regression tests
+$env:RUN_OCR_TESTS="1"; pytest -q        # also scanned documents (local OCR, slow)
+python scripts\evaluate.py --ocr         # writes docs/ACCURACY_REPORT.md
+python scripts\evaluate_variants.py --n 150   # same template, different data (known templates)
 python scripts\verify_offline.py
 ```
 
+`evaluate_variants.py` turns each known template into many documents of the same layout with different
+names, places, ages, phone numbers, FIR numbers, dates and sections, plus added/removed witnesses and
+accused, and checks each against its own ground truth. Template specs live in
+`tests/fixtures/private/variant_specs/` (gitignored); add one per new template you need to guarantee.
+
+Ground truth lives in `tests/fixtures/ground_truth/` (synthetic, committed) and `tests/fixtures/private/`
+(real documents — **gitignored**, contains personal data; source PDFs are located by SHA-256 under
+`uploads/` or `$EVAL_DOCS_DIR`). Each file may list `known_gaps`; the regression test fails on any other
+mismatch. Accuracy figures in `docs/ACCURACY_REPORT.md` are counts on a small dataset that was also used
+during development — they are not a general accuracy claim. Measure on your own verified documents before
+operational use.
+
 ## Configuration
 
-See `.env.example`. Important keys: `API_KEY`, `DATABASE_URL`, `UPLOAD_DIR`, `OFFLINE_MODE`, `ALLOW_EXTERNAL_NETWORK`, `OCR_ENABLED`, `RETENTION_DAYS`, `CORS_ORIGINS`.
+See `.env.example`. Important keys: `ENABLE_AUTH`, `API_KEY`, `API_KEYS`, `DATABASE_URL`, `UPLOAD_DIR`,
+`RETENTION_DAYS`, `OFFLINE_MODE`, `NETWORK_ALLOWLIST`, `OCR_ENABLED`, `OCR_ENABLE_MKLDNN`,
+`PROCESSING_TIMEOUT_SECONDS`, `MAX_UPLOAD_SIZE_MB`, `MAX_PAGES`, `CORS_ORIGINS`.
 
 ## Project layout
 
 ```text
-app/           FastAPI app, services, schemas, UI
-tests/         Automated tests + fixtures
-scripts/       Sample PDF generator, offline verification
-docs/          Security documentation
-uploads/       Stored PDFs (local)
-data/          SQLite DB (local)
+app/            FastAPI app, services (pipeline), schemas, UI
+evaluation/     Ground-truth loading and metrics (never imported by app/)
+tests/          Automated tests + fixtures (synthetic PDFs, ground truth)
+scripts/        Sample generator, evaluation, offline verification
+docs/           Security, audit report, accuracy report
+uploads/ data/  Local PDFs and SQLite database (gitignored)
 ```
-
-## Accuracy notes
-
-Extraction quality depends on PDF text layer / OCR quality. The pipeline:
-
-- Maps known synonyms (FIR / Crime No / PS / Distt / Challan, etc.)
-- Extracts numbered accused/witness blocks heuristically
-- Flags missing/uncertain values instead of inventing data
-- Leaves `requires_human_review=true` until an operator verifies
-
-Measure field-mapping accuracy against manually verified ground truth for your jurisdiction’s forms before operational use.

@@ -1,25 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{ app_name }} — Upload</title>
-  <link rel="stylesheet" href="/static/css/styles.css" />
-</head>
-<body>
-  <div class="wrap">
-    <header class="app-header">
-      <div>
-        <h1>{{ app_name }}</h1>
-        <div class="sub">Local-only PDF extraction · template-independent mapping</div>
-      </div>
-      <nav>
-        <a class="active" href="/">Upload</a>
-        <a href="/history">History</a>
-        <a href="/docs" target="_blank">API Docs</a>
-      </nav>
-    </header>
-
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — Upload{% endblock %}
+{% block page %}upload{% endblock %}
+{% block subtitle %}Local-only PDF extraction · template-independent mapping{% endblock %}
+{% block content %}
     <div class="card">
       <h2>Upload charge sheet PDF</h2>
       <div id="dropzone" class="dropzone" role="button" tabindex="0">
@@ -34,8 +17,4 @@
       </div>
       <div id="upload-status" class="hidden"></div>
     </div>
-  </div>
-  <script src="/static/js/app.js"></script>
-  <script>ChargeSheetApp.initUploadPage();</script>
-</body>
-</html>
+{% endblock %}
