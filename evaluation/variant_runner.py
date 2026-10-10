@@ -66,6 +66,15 @@ def _patched_service(variant: Variant, base_pdf):
 
     svc = ExtractionService(db=None)
     pdf_result = variant.pdf_result if variant.pdf_result is not None else base_pdf
+    if variant.ocr_pages is None:
+        # Native templates: the variant rewrites the text layer, so OCR of the original
+        # page image would mix the original document's values into the variant. Pages the
+        # router marked "both" (glued text) stay native-only here.
+        pdf_result = copy.deepcopy(pdf_result)
+        for page in pdf_result.pages:
+            if getattr(page, "route", "native") == "both":
+                page.route = "native"
+                page.needs_ocr = False
     svc.pdf.extract = lambda path: copy.deepcopy(pdf_result)
     if variant.ocr_pages is not None:
         pages = {p["page"]: p for p in variant.ocr_pages}

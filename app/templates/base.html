@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/styles.css" />
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
 </head>
 <body data-api-key-header="{{ api_key_header }}" data-page="{% block page %}{% endblock %}" {% block body_attrs %}{% endblock %}>
   <div class="wrap">
@@ -28,6 +28,6 @@
     </div>
     {% block content %}{% endblock %}
   </div>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v={{ asset_version }}"></script>
 </body>
 </html>

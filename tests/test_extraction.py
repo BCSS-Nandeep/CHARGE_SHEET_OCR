@@ -16,10 +16,13 @@ from app.services.extraction_service import ExtractionService
 def test_scanned_without_ocr_fails_instead_of_completing(fixtures_dir: Path):
     data = ExtractionService(db=None).process(fixtures_dir / "sample_04_scanned_image.pdf")
     assert data.extraction_status == ExtractionStatus.FAILED
-    assert data.overall_confidence == 0.0
-    assert data.case.fir_number is None and not data.accused_persons
+    assert data.overall_confidence is None
+    assert not data.fields  # nothing extracted, nothing invented
     assert any(w.startswith("OCR_REQUIRED") for w in data.extraction_warnings)
-    assert any(s.stage == "ocr_local" and s.status.value == "failed" for s in data.stage_results)
+    assert any(
+        s.stage in ("hybrid_page_acquire", "ocr_local") and s.status.value == "failed"
+        for s in data.stage_results
+    )
 
 
 def test_ocr_engine_error_surfaces_in_status(monkeypatch, fixtures_dir: Path):
@@ -61,9 +64,8 @@ def test_page_needing_ocr_makes_extraction_partial(tmp_path):
     _mixed_pdf(pdf)
     data = ExtractionService(db=None).process(pdf)
     assert data.extraction_status == ExtractionStatus.PARTIAL
-    assert data.case.fir_number.original_value == "4/2017"
+    assert ("FIR No.", "4/2017") in [(f.label, f.value) for f in data.fields]
     assert [p.text_source for p in data.page_summaries] == ["native", "none"]
-    assert data.overall_confidence <= 0.5
 
 
 @pytest.mark.parametrize("name", [
@@ -74,18 +76,28 @@ def test_payload_traceability(fixtures_dir: Path, name):
     data = ExtractionService(db=None).process(fixtures_dir / name)
     assert isinstance(data, ChargeSheetData)
     assert data.extraction_status == ExtractionStatus.COMPLETE
-    fields = data.all_fields()
-    # Corrections address fields by canonical name: names must be unique
-    dupes = [n for n, c in Counter(f.canonical_name for f in fields).items() if c > 1]
+    assert data.fields
+    # Corrections address fields by id: ids must be unique
+    dupes = [n for n, c in Counter(f.id for f in data.fields).items() if c > 1]
     assert not dupes, dupes
-    for f in fields:
+    for f in data.fields:
         assert f.review_status == ReviewStatus.UNREVIEWED
-        if f.original_value and not f.canonical_name.startswith("document_type"):
-            assert f.source_page is not None, f.canonical_name
+        assert f.page in f.pages and f.id.startswith(f"p{f.page}-")
+        assert f.label or f.value
     assert data.requires_human_review
 
 
-def test_entities_carry_their_own_page(fixtures_dir: Path):
+def test_fields_carry_the_page_where_their_label_is(fixtures_dir: Path):
     data = ExtractionService(db=None).process(fixtures_dir / "sample_03_multipage.pdf")
-    assert {a.name.source_page for a in data.accused_persons} == {2}
-    assert {w.name.source_page for w in data.witnesses} == {3}
+    pages = {f.label: f.page for f in data.fields}
+    assert pages["District"] == 1 and pages["Accused"] == 2 and pages["Witnesses"] == 3
+
+
+def test_only_labels_printed_in_the_pdf_appear(fixtures_dir: Path):
+    """No fixed field list: a document without a court / charge-sheet number simply has no such field."""
+    data = ExtractionService(db=None).process(fixtures_dir / "sample_06_missing_fields_and_traps.pdf")
+    labels = [f.label for f in data.fields if f.label]
+    assert labels == ["Name of Police Station", "FIR No. & Date", "Sections of law", "Name of IO",
+                      "Accused", "Witnesses", "Brief facts"]
+    by_label = {f.label: f.value for f in data.fields}
+    assert by_label["FIR No. & Date"] == "19/2025 dt. 03-01-2025"  # value exactly as printed

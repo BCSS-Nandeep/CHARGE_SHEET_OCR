@@ -67,7 +67,7 @@ def test_retention_purges_results_corrections_and_file(client, fixtures_dir):
     with pdf.open("rb") as f:
         doc_id = client.post("/api/v1/documents/upload", files={"file": (pdf.name, f, "application/pdf")}).json()["document_id"]
     client.patch(f"/api/v1/documents/{doc_id}/fields",
-                 json={"corrections": [{"canonical_name": "district", "corrected_value": "X"}]})
+                 json={"corrections": [{"field_id": "p1-01", "corrected_value": "X"}]})
 
     from app.db import session_scope
     from app.models import CorrectionRecord, DocumentRecord, ResultRecord

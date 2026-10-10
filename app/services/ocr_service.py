@@ -37,6 +37,7 @@ class OcrLine:
     text: str
     confidence: float
     bbox: Tuple[float, float, float, float]  # x0, y0, x1, y1 in image pixels
+    poly: Optional[List[Tuple[float, float]]] = None  # rotated quad (tl, tr, br, bl) when available
 
 
 @dataclass
@@ -124,12 +125,23 @@ class OcrService:
 
                 try:
                     # PaddleOCR 3.x
+                    tuning = {}
+                    if self.settings.ocr_det_limit_side_len > 0:
+                        tuning = {
+                            "text_det_limit_type": "max",
+                            "text_det_limit_side_len": self.settings.ocr_det_limit_side_len,
+                        }
+                    if self.settings.ocr_det_box_thresh > 0:
+                        tuning["text_det_box_thresh"] = self.settings.ocr_det_box_thresh
+                    orient = bool(self.settings.ocr_use_orientation)
                     _ocr_instance = PaddleOCR(
                         lang=self.settings.ocr_lang,
-                        use_textline_orientation=False,
-                        use_doc_orientation_classify=False,
+                        use_textline_orientation=orient,
+                        use_doc_orientation_classify=orient,
                         use_doc_unwarping=False,
                         enable_mkldnn=self.settings.ocr_enable_mkldnn,
+                        cpu_threads=self.settings.ocr_cpu_threads,
+                        **tuning,
                     )
                 except TypeError:
                     # PaddleOCR 2.x constructor
@@ -169,15 +181,17 @@ class OcrService:
             if data is not None and ("rec_texts" in data or "texts" in data):
                 texts = data.get("rec_texts") or data.get("texts") or []
                 scores = data.get("rec_scores") if data.get("rec_scores") is not None else []
+                polys = data.get("rec_polys")
                 boxes = data.get("rec_boxes")
                 if boxes is None:
-                    boxes = data.get("rec_polys")
+                    boxes = polys
                 for i, txt in enumerate(texts):
                     if not txt or not str(txt).strip():
                         continue
                     conf = float(scores[i]) if i < len(scores) else 0.0
                     bbox = _to_bbox(boxes[i]) if boxes is not None and i < len(boxes) else (0.0, 0.0, 0.0, 0.0)
-                    lines.append(OcrLine(str(txt).strip(), conf, bbox))
+                    poly = _to_poly(polys[i]) if polys is not None and i < len(polys) else None
+                    lines.append(OcrLine(str(txt).strip(), conf, bbox, poly))
                 continue
             # 2.x: [[[box], (text, conf)], ...]
             if not isinstance(page, (list, tuple)):
@@ -191,7 +205,7 @@ class OcrService:
                 else:
                     txt, conf = str(text_info), 0.0
                 if txt and str(txt).strip():
-                    lines.append(OcrLine(str(txt).strip(), conf, _to_bbox(item[0])))
+                    lines.append(OcrLine(str(txt).strip(), conf, _to_bbox(item[0]), _to_poly(item[0])))
         return lines
 
     def recognize_png(self, png_bytes: bytes) -> OcrResult:
@@ -267,6 +281,17 @@ def _to_bbox(box) -> Tuple[float, float, float, float]:
     if not xs or not ys:
         return (0.0, 0.0, 0.0, 0.0)
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _to_poly(points) -> Optional[List[Tuple[float, float]]]:
+    """4-point polygon [[x,y]*4] → list of tuples; None for axis-aligned [x0,y0,x1,y1]."""
+    try:
+        items = points.tolist() if hasattr(points, "tolist") else list(points)
+        if len(items) == 4 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in items):
+            return [(float(x), float(y)) for x, y in items]
+    except Exception:
+        pass
+    return None
 
 
 def _tesseract_lines(img, binary: str, lang: str) -> List[OcrLine]:

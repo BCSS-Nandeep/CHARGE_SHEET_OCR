@@ -1,9 +1,10 @@
 # Charge Sheet PDF Extraction Service
 
 Standalone **local-only** FastAPI service with an HTML UI for uploading charge-sheet PDFs, extracting text
-(PyMuPDF for text-layer PDFs, local PaddleOCR / Tesseract for scans), mapping fields to a versioned schema
-without per-template parsers, validating, flagging source conflicts, and exposing results over a REST API.
-
+via a **hybrid page router** (PyMuPDF native text → PaddleOCR + PP-Structure for scans → optional Docling
+assist on digital forms → Tesseract fallback → optional local PaddleOCR-VL for hard pages), detecting the
+**labels and values printed in each PDF** (no fixed field list, no per-template parsers), and exposing the
+result over a REST API and an editable review UI.
 > **Security:** designed for confidential police data. No document content leaves the host. See
 > [docs/SECURITY.md](docs/SECURITY.md). Audit findings and design notes: [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md).
 
@@ -12,15 +13,21 @@ without per-template parsers, validating, flagging source conflicts, and exposin
 - Digital and scanned multi-page PDFs (UI + API); OCR runs locally, per page, with honest failure reporting
 - Layout-aware parsing: ruled form tables, OCR'd tables rebuilt from text-box geometry, header tables
   (label row over value row), `Label: value` / space-aligned text layouts, glued (space-less) PDF exports
-- Form section vs. narrative separation: case identifiers come only from the form; other FIR numbers in the
-  narrative are kept as *related case references*
-- Structured accused / witnesses / investigating officers (name, parentage, age, occupation, address,
-  contact, ID, role, arrest status) with source page and source text for every value
-- Legal provisions tagged as charged / registered / altered / procedural / reference
-- Conflicts in the source (e.g. two different ages for one accused) are recorded and never auto-resolved
-- Separate statuses: extraction (`complete` / `partial` / `failed`), validation (`valid`, `uncertain`,
-  `invalid`, `missing`, `conflicting`), review (`unreviewed`, `corrected`, `verified`)
-- Corrections stored separately with the extracted value they replaced, the reviewer and an audit trail;
+- **The PDF decides the fields** (schema 2.0.0): the result is one list of fields in reading order, each
+  with the label exactly as printed (header-table label, form-row label cell, text before a colon, or a
+  heading line), the value exactly as printed (lines kept), the page(s), the form row number if printed,
+  and OCR confidence for scanned pages. A field that is not in the PDF is not in the result
+- Continuity: everything after a label (beside it, below it, on the following pages) is its value until the
+  next label; rows under a list heading (witnesses, accused) stay in that heading's value; the running
+  narrative is one value with paragraphs kept; text before the first label is kept without a label
+- The built-in label vocabulary is used only to *recognise* that a phrase is a label — labels are never
+  renamed. Scanner watermarks ("Scanned with CamScanner") and header/footer lines repeated on several
+  pages are left out; missing spaces in glued PDF exports are restored
+- **raw_json** tab in the UI and `/raw` endpoint: every line read from each page exactly as read (text layer
+  or OCR), top to bottom, with OCR confidence — nothing dropped, grouped or corrected; stored
+  locally next to the results and deleted with the document
+- Separate statuses: extraction (`complete` / `partial` / `failed`) and review (`unreviewed`, `corrected`,
+  `verified`). Results from schema 1.x load as "reprocess required"- Corrections stored separately with the extracted value they replaced, the reviewer and an audit trail;
   re-applied after reprocessing only when the source value is unchanged
 - Role-based API keys; verification requires an authenticated reviewer and notes
 - Retention purge and on-demand deletion remove the PDF, extracted data and corrections
@@ -82,10 +89,11 @@ curl.exe -s -H "X-API-Key: $K" http://127.0.0.1:8000/api/v1/documents/<id>/resul
 | POST | `/api/v1/documents/upload` | operator | Upload a PDF (202, processed asynchronously) |
 | GET | `/api/v1/documents` | viewer | List documents |
 | GET | `/api/v1/documents/{id}` | viewer | Metadata / processing status |
-| GET | `/api/v1/documents/{id}/results` | viewer | Structured extraction. `422` with diagnostics (stages, pages, warnings) when extraction failed; `results: null` while processing |
+| GET | `/api/v1/documents/{id}/results` | viewer | Field list (labels and values as printed). `422` with diagnostics (stages, pages, warnings) when extraction failed; `results: null` while processing |
+| GET | `/api/v1/documents/{id}/raw` | viewer | Raw JSON: every text line read from the PDF, page by page, as read (text, text layer or OCR, OCR confidence). `?download=true` returns it as `<name>_raw.json`; `404` for documents processed before raw capture (reprocess) |
 | GET | `/api/v1/documents/{id}/source` | viewer | Original PDF |
 | GET | `/api/v1/documents/{id}/corrections` | viewer | Correction / verification audit trail |
-| PATCH | `/api/v1/documents/{id}/fields` | operator | Corrections by `canonical_name` (unknown names → 400) |
+| PATCH | `/api/v1/documents/{id}/fields` | operator | Corrections by `field_id` (e.g. `p1-03`; unknown ids → 400) |
 | POST | `/api/v1/documents/{id}/verify` | reviewer | Mark verified (notes required) |
 | POST | `/api/v1/documents/{id}/reprocess` | operator | Re-run extraction (resets verification) |
 | DELETE | `/api/v1/documents/{id}` | admin | Delete PDF, results and corrections |
@@ -117,6 +125,7 @@ operational use.
 
 See `.env.example`. Important keys: `ENABLE_AUTH`, `API_KEY`, `API_KEYS`, `DATABASE_URL`, `UPLOAD_DIR`,
 `RETENTION_DAYS`, `OFFLINE_MODE`, `NETWORK_ALLOWLIST`, `OCR_ENABLED`, `OCR_ENABLE_MKLDNN`,
+`PPSTRUCTURE_ENABLED`, `DOCLING_ENABLED`, `VL_ENABLED`, `VL_REQUIRE_GPU`, `STORE_PAGE_TEXT`,
 `PROCESSING_TIMEOUT_SECONDS`, `MAX_UPLOAD_SIZE_MB`, `MAX_PAGES`, `CORS_ORIGINS`.
 
 ## Project layout

@@ -73,5 +73,5 @@ def test_real_ocr_on_scanned_fixture(monkeypatch, fixtures_dir):
     get_settings.cache_clear()
     data = ExtractionService(db=None).process(fixtures_dir / "sample_04_scanned_image.pdf")
     assert data.extraction_status.value == "complete"
-    assert data.case.fir_number and data.case.fir_number.original_value == "901/2021"
+    assert any("901/2021" in f.value for f in data.fields)
     assert data.page_summaries[0].text_source == "ocr"

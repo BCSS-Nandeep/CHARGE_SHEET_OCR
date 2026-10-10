@@ -58,8 +58,29 @@ class Settings(BaseSettings):
     # Paddle 3.x oneDNN kernels crash on some CPUs/models
     # ("ConvertPirAttribute2RuntimeAttribute not support"); off by default.
     ocr_enable_mkldnn: bool = False
+    # Measured on an i7-14700: 8 threads is faster than the default 10 (more threads
+    # spill onto efficiency cores), and text detection on a 1600 px image is ~2x
+    # faster than full resolution and finds lines full resolution misses.
+    ocr_cpu_threads: int = 8
+    ocr_det_limit_side_len: int = 1600  # 0 = detect at full rendered resolution
+    # Paddle's default 0.6 drops faint lines on photocopies (court headings, the
+    # first narrative lines); 0.3 recovers them at ~10% extra detection time.
+    ocr_det_box_thresh: float = 0.3  # 0 = engine default
     # Explicit path to tesseract.exe when it is not on PATH.
     tesseract_cmd: str = ""
+
+    # Hybrid stack (PyMuPDF router → Paddle/PP-Structure → Docling → VL).
+    # Docling/VL are opt-in: they pull large models and are slow offline until cached.
+    ppstructure_enabled: bool = True
+    docling_enabled: bool = False
+    vl_enabled: bool = False
+    vl_require_gpu: bool = True
+    vl_pipeline: str = "PaddleOCR-VL"
+    ocr_accept_min_confidence: float = 0.70
+    # Paddle angle/doc orientation classifiers (extra models; enable when scans are rotated)
+    ocr_use_orientation: bool = False
+    # Persist per-page native/OCR text into results JSON (sensitive). Default off.
+    store_page_text: bool = False
 
     # /docs and /redoc make the *browser* load Swagger/ReDoc assets from cdn.jsdelivr.net.
     # Disable on air-gapped networks.

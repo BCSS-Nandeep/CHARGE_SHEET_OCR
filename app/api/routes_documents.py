@@ -18,10 +18,10 @@ from app.schemas.api_responses import (
     TemplateListResponse,
     TemplateProfile,
 )
-from app.schemas.document import DocumentStatus
+from app.schemas.document import DocumentStatus, ProcessingProgress
 from app.security.auth import Principal, require_api_key, require_role
 from app.security.files import resolve_under
-from app.services.processing_service import enqueue_processing, is_inflight
+from app.services.processing_service import enqueue_processing, get_progress, is_inflight
 from app.services.retention_service import delete_document_content
 from app.services.template_service import TemplateService
 
@@ -64,7 +64,11 @@ def list_documents(
 )
 def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentStatusResponse:
     repo = DocumentRepository(db)
-    return DocumentStatusResponse(document=repo.to_meta(_get_live(repo, document_id)))
+    meta = repo.to_meta(_get_live(repo, document_id))
+    progress = get_progress(document_id)
+    if progress:
+        meta.progress = ProcessingProgress(**progress)
+    return DocumentStatusResponse(document=meta)
 
 
 @router.get(

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, Optional, Tuple
 
 from app.config import get_settings
 from app.db import session_scope
@@ -19,6 +21,25 @@ logger = get_logger(__name__)
 _executor = ThreadPoolExecutor(max_workers=2)
 _lock = threading.Lock()
 _inflight = set()
+# document_id -> (current step, monotonic start time). In memory only; steps
+# are fixed phrases ("OCR page 2 of 4"), never document content.
+_progress: Dict[str, Tuple[str, float]] = {}
+
+
+def _set_progress(document_id: str, step: str) -> None:
+    with _lock:
+        started = _progress.get(document_id, (step, time.monotonic()))[1]
+        _progress[document_id] = (step, started)
+
+
+def get_progress(document_id: str) -> Optional[dict]:
+    """Current step and elapsed seconds of a document being processed, else None."""
+    with _lock:
+        entry = _progress.get(document_id)
+    if entry is None:
+        return None
+    step, started = entry
+    return {"step": step, "elapsed_seconds": round(time.monotonic() - started, 1)}
 
 
 def enqueue_processing(document_id: str) -> None:
@@ -75,6 +96,7 @@ def _run_safe(document_id: str) -> None:
     finally:
         with _lock:
             _inflight.discard(document_id)
+            _progress.pop(document_id, None)
 
 
 def _failure_reason(data) -> str:
@@ -96,6 +118,7 @@ def process_document(document_id: str) -> None:
             return
         repo.update_status(document_id, DocumentStatus.PROCESSING, error_message="")
         stored = doc.stored_filename
+    _set_progress(document_id, "Starting")
 
     path = resolve_under(settings.upload_dir, stored)
     if not path.exists():
@@ -109,7 +132,9 @@ def process_document(document_id: str) -> None:
 
     try:
         with session_scope() as db:
-            data = ExtractionService(db=db).process(path)
+            extractor = ExtractionService(db=db)
+            data = extractor.process(path, progress=lambda step: _set_progress(document_id, step))
+            _set_progress(document_id, "Saving results")
             repo = DocumentRepository(db)
             reapplied, skipped = repo.reapply_corrections(document_id, data)
             if skipped:
@@ -117,7 +142,7 @@ def process_document(document_id: str) -> None:
                     f"{skipped} earlier correction(s) were not re-applied because the source value changed; "
                     "see the correction history"
                 )
-            ResultsRepository(db).save(document_id, data)
+            ResultsRepository(db).save(document_id, data, raw=extractor.last_raw)
             failed = data.extraction_status == ExtractionStatus.FAILED
             repo.update_status(
                 document_id,

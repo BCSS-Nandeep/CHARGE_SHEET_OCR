@@ -28,7 +28,9 @@ _MONTHS = {
     for m in names
 }
 
-_NUMERIC_DATE = re.compile(r"(?<!\d)(\d{1,2})\s*[./\-]\s*(\d{1,2})\s*[./\-]\s*(\d{4}|\d{2})(?!\d)")
+# OCR often reads one dot of "25.10.2021" as a comma; one comma separator is
+# tolerated, two ("1,10,2021") look like a number list and are not a date.
+_NUMERIC_DATE = re.compile(r"(?<![\d,])(\d{1,2})\s*([./\-,])\s*(\d{1,2})\s*([./\-,])\s*(\d{4}|\d{2})(?![\d,])")
 _TEXT_DATE = re.compile(r"(?<!\d)(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})(?!\d)")
 
 
@@ -39,13 +41,24 @@ def _year(raw: str) -> int:
     return y
 
 
+def find_numeric_date(text: Optional[str]) -> Optional[re.Match]:
+    """First dd.mm.yyyy-shaped token (not checked against the calendar)."""
+    for m in _NUMERIC_DATE.finditer(text or ""):
+        if m.group(2) == "," and m.group(4) == ",":
+            continue
+        return m
+    return None
+
+
 def parse_date(text: Optional[str]) -> Optional[date]:
     """First calendar-valid day-first date in the text (Indian convention dd.mm.yyyy)."""
     if not text:
         return None
     for m in _NUMERIC_DATE.finditer(text):
+        if m.group(2) == "," and m.group(4) == ",":
+            continue
         try:
-            return date(_year(m.group(3)), int(m.group(2)), int(m.group(1)))
+            return date(_year(m.group(5)), int(m.group(3)), int(m.group(1)))
         except ValueError:
             continue
     for m in _TEXT_DATE.finditer(text):
@@ -59,8 +72,18 @@ def parse_date(text: Optional[str]) -> Optional[date]:
     return None
 
 
+def all_dates(text: Optional[str]) -> set:
+    """Every calendar-valid day-first numeric date in the text."""
+    out = set()
+    for m in _NUMERIC_DATE.finditer(text or ""):
+        d = parse_date(m.group(0))
+        if d:
+            out.add(d)
+    return out
+
+
 def has_date_shape(text: Optional[str]) -> bool:
-    return bool(text and (_NUMERIC_DATE.search(text) or _TEXT_DATE.search(text)))
+    return bool(text and (find_numeric_date(text) or _TEXT_DATE.search(text)))
 
 
 def digits(text: Optional[str]) -> str:

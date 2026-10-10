@@ -25,7 +25,9 @@ the `LLM_*` settings are placeholders that `scripts/verify_offline.py` checks st
 2. A background worker extracts text (PyMuPDF). Pages without a text layer are rendered to PNG **in memory**
    and OCR'd locally. No page images or text are written to disk or logs.
 3. Parsing, mapping, validation and conflict detection run in-process.
-4. Structured results (which include personal data) are stored in the database. Full page text is not persisted.
+4. Results (which include personal data) are stored in the database, and so is the raw text of every page
+   (`results.raw_json`, served by `GET /api/v1/documents/{id}/raw` to any valid API key, same as results). It is
+   never logged (the audit log records only that it was viewed) and is removed with the document.
 5. Corrections are stored separately, with the extracted value they replaced and the reviewer name.
 6. Retention (`RETENTION_DAYS`) and `DELETE /api/v1/documents/{id}` remove the PDF, results and corrections;
    a tombstone row without content or file name is kept for the audit trail.

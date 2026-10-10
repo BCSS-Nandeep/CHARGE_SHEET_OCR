@@ -20,6 +20,10 @@ class HealthResponse(BaseModel):
     ocr_available: bool
     ocr_engine: str = "none"
     ocr_error: Optional[str] = None
+    ppstructure_available: bool = False
+    docling_available: bool = False
+    vl_available: bool = False
+    store_page_text: bool = False
     auth_enabled: bool = False
     auth_misconfigured: bool = False
     llm_enabled: bool
@@ -59,7 +63,7 @@ class DocumentListResponse(BaseModel):
 class FieldCorrectionItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    canonical_name: str
+    field_id: str  # PdfField.id, e.g. "p1-03"
     corrected_value: Any
     review_status: ReviewStatus = ReviewStatus.CORRECTED
     notes: Optional[str] = None

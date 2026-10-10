@@ -63,24 +63,25 @@ def test_correct_verify_reprocess_workflow(client: TestClient, fixtures_dir: Pat
     assert meta["status"] == "completed"
     payload = client.get(f"/api/v1/documents/{doc_id}/results").json()
     assert payload["results"]["extraction_status"] == "complete"
-    assert payload["results"]["case"]["district"]["original_value"] == "Sample District"
+    district = next(f for f in payload["results"]["fields"] if f["label"] == "District")
+    assert district["value"] == "Sample District"
+    fid = district["id"]
 
     bad = client.patch(f"/api/v1/documents/{doc_id}/fields",
-                       json={"corrections": [{"canonical_name": "no_such_field", "corrected_value": "x"}]})
+                       json={"corrections": [{"field_id": "p9-99", "corrected_value": "x"}]})
     assert bad.status_code == 400
 
     patch = client.patch(
         f"/api/v1/documents/{doc_id}/fields",
-        json={"corrections": [{"canonical_name": "district", "corrected_value": "Corrected District"}]},
+        json={"corrections": [{"field_id": fid, "corrected_value": "Corrected District"}]},
         headers={"X-API-Key": OPERATOR_KEY},
     )
     assert patch.status_code == 200
-    district = patch.json()["results"]["case"]["district"]
-    assert district["original_value"] == "Sample District"  # original preserved
+    district = next(f for f in patch.json()["results"]["fields"] if f["id"] == fid)
+    assert district["value"] == "Sample District"  # original preserved
     assert district["corrected_value"] == "Corrected District"
-    corr = patch.json()["field_corrections"]["district"]
+    corr = patch.json()["field_corrections"][fid]
     assert corr["reviewer"] == "ops" and corr["original_value"] == "Sample District"
-
     assert client.post(f"/api/v1/documents/{doc_id}/verify", json={"verified": True},
                        headers={"X-API-Key": REVIEWER_KEY}).status_code == 400  # notes required
     verify = client.post(f"/api/v1/documents/{doc_id}/verify", json={"verified": True, "notes": "Checked against PDF"},
@@ -94,11 +95,11 @@ def test_correct_verify_reprocess_workflow(client: TestClient, fixtures_dir: Pat
     assert re.status_code == 200
     meta = client.get(f"/api/v1/documents/{doc_id}").json()["document"]
     assert meta["status"] == "completed" and meta["verified"] is False
-    district = client.get(f"/api/v1/documents/{doc_id}/results").json()["results"]["case"]["district"]
-    assert district["corrected_value"] == "Corrected District"
+    fields = client.get(f"/api/v1/documents/{doc_id}/results").json()["results"]["fields"]
+    assert next(f for f in fields if f["id"] == fid)["corrected_value"] == "Corrected District"
 
     history = client.get(f"/api/v1/documents/{doc_id}/corrections").json()
-    assert [h["canonical_name"] for h in history] == ["district", "_verification"]
+    assert [h["canonical_name"] for h in history] == [fid, "_verification"]
 
     assert client.get(f"/api/v1/documents/{doc_id}/source").headers["content-type"].startswith("application/pdf")
 
@@ -112,10 +113,29 @@ def test_failed_extraction_is_not_presented_as_results(client: TestClient, fixtu
     assert res.status_code == 422
     detail = res.json()["detail"]
     assert detail["extraction_status"] == "failed"
-    assert any(s["stage"] == "ocr_local" for s in detail["stage_results"])
-    assert "case" not in detail  # diagnostics only, no extracted values
+    assert any(s["stage"] in ("hybrid_page_acquire", "ocr_local") for s in detail["stage_results"])
+    assert "fields" not in detail  # diagnostics only, no extracted values
     assert client.patch(f"/api/v1/documents/{doc_id}/fields",
-                        json={"corrections": [{"canonical_name": "district", "corrected_value": "x"}]}).status_code == 409
+                        json={"corrections": [{"field_id": "p1-01", "corrected_value": "x"}]}).status_code == 409
+
+
+def test_processing_progress_is_reported_then_cleared(client: TestClient, fixtures_dir: Path, monkeypatch):
+    from app.services import processing_service
+
+    steps = []
+    real_set = processing_service._set_progress
+    monkeypatch.setattr(processing_service, "_set_progress", lambda d, s: (steps.append(s), real_set(d, s)))
+    doc_id = _upload(client, fixtures_dir / "sample_02_alternate_labels.pdf")
+    assert steps[0] == "Starting" and steps[-1] == "Saving results"
+    assert any(s.startswith("Detecting labels") for s in steps)
+    assert client.get(f"/api/v1/documents/{doc_id}").json()["document"]["progress"] is None  # finished
+
+    real_set(doc_id, "OCR page 1 of 2 (PDF page 1)")  # as seen while a scan is running
+    try:
+        progress = client.get(f"/api/v1/documents/{doc_id}").json()["document"]["progress"]
+        assert progress["step"] == "OCR page 1 of 2 (PDF page 1)" and progress["elapsed_seconds"] >= 0
+    finally:
+        processing_service._progress.pop(doc_id, None)
 
 
 def test_delete_purges_content(client: TestClient, fixtures_dir: Path):
@@ -123,9 +143,48 @@ def test_delete_purges_content(client: TestClient, fixtures_dir: Path):
     assert client.delete(f"/api/v1/documents/{doc_id}").status_code == 204
     assert client.get(f"/api/v1/documents/{doc_id}").status_code == 404
     assert client.get(f"/api/v1/documents/{doc_id}/results").status_code == 404
+    assert client.get(f"/api/v1/documents/{doc_id}/raw").status_code == 404
     from app.config import get_settings
 
     assert not list(Path(get_settings().upload_dir).glob("*alternate_labels*"))
+
+
+def test_raw_json_lists_every_line_as_read(client: TestClient, fixtures_dir: Path):
+    doc_id = _upload(client, fixtures_dir / "sample_01_digital_standard.pdf")
+    raw = client.get(f"/api/v1/documents/{doc_id}/raw", headers={"X-API-Key": VIEWER_KEY})
+    assert raw.status_code == 200
+    body = raw.json()
+    assert body["format"] == "raw-lines-1.1" and body["document_id"] == doc_id
+    assert body["file_name"] == "sample_01_digital_standard.pdf"
+    assert body["page_count"] == len(body["pages"]) >= 1
+    page1 = body["pages"][0]
+    assert page1["text_source"] == "native"
+    assert [ln["line"] for ln in page1["lines"]] == list(range(1, len(page1["lines"]) + 1))
+    texts = [ln["text"] for ln in page1["lines"]]
+    assert any("District" in t and "Sample District" in t for t in texts)  # exactly as printed, label and value together
+    assert all(set(ln) == {"line", "text", "source", "confidence"} for ln in page1["lines"])  # no positions
+    assert all(ln["source"] == "native" and ln["confidence"] is None for ln in page1["lines"])
+    assert "width" not in page1 and "height" not in page1
+
+    dl = client.get(f"/api/v1/documents/{doc_id}/raw?download=true")
+    assert dl.status_code == 200
+    assert 'attachment; filename="sample_01_digital_standard_raw.json"' in dl.headers["content-disposition"]
+    assert dl.json() == body
+    assert client.get(f"/api/v1/documents/{doc_id}/raw", headers={"X-API-Key": "wrong"}).status_code == 401
+
+
+def test_raw_json_missing_for_results_from_an_older_version(client: TestClient, fixtures_dir: Path):
+    from app.db import session_scope
+    from app.models import ResultRecord
+
+    doc_id = _upload(client, fixtures_dir / "sample_02_alternate_labels.pdf")
+    with session_scope() as db:
+        db.query(ResultRecord).filter(ResultRecord.document_id == doc_id).one().raw_json = None
+    res = client.get(f"/api/v1/documents/{doc_id}/raw")
+    assert res.status_code == 404 and "reprocess" in res.json()["detail"]
+    # reprocessing writes the raw lines again
+    client.post(f"/api/v1/documents/{doc_id}/reprocess", headers={"X-API-Key": OPERATOR_KEY})
+    assert client.get(f"/api/v1/documents/{doc_id}/raw").status_code == 200
 
 
 def test_reject_non_pdf_and_oversized(client: TestClient, monkeypatch):

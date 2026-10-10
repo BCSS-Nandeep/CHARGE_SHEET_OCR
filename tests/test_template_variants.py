@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def benches():
+    previous = os.environ.get("OCR_ENABLED")
     os.environ["OCR_ENABLED"] = "true"  # scanned template replays cached OCR boxes
     from app.config import get_settings
 
@@ -34,7 +35,13 @@ def benches():
     found = load_benches()
     if not found:
         pytest.skip("source PDFs for the variant specs are not available")
-    return found
+    yield found
+    # Later tests must not inherit OCR (they would run real OCR on 'both'-routed pages)
+    if previous is None:
+        os.environ.pop("OCR_ENABLED", None)
+    else:
+        os.environ["OCR_ENABLED"] = previous
+    get_settings.cache_clear()
 
 
 def test_known_templates_with_different_data(benches):

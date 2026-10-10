@@ -61,6 +61,8 @@ class ResultRecord(Base):
         String(36), ForeignKey("documents.id", ondelete="CASCADE"), unique=True
     )
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Every text line read from the PDF (raw_json view); kept apart so results stay small
+    raw_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     overall_confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

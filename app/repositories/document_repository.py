@@ -189,7 +189,7 @@ class DocumentRepository:
             if name.startswith("_"):
                 continue
             field = fmap.get(name)
-            if field is None or corr.get("original_value") is None or str(field.original_value) != corr["original_value"]:
+            if field is None or corr.get("original_value") is None or field.value != corr["original_value"]:
                 skipped += 1
                 continue
             field.corrected_value = corr["corrected_value"]

@@ -2,10 +2,6 @@
 
 const API_KEY_STORAGE = "cs_api_key";
 const API_KEY_HEADER = (document.body && document.body.dataset.apiKeyHeader) || "X-API-Key";
-const CORE_CASE_FIELDS = [
-  "district", "police_station", "year", "fir_number", "fir_date",
-  "charge_sheet_number", "submission_date", "court_name", "final_report_type", "supplementary_or_original",
-];
 
 /* ---------- helpers ---------- */
 
@@ -64,6 +60,11 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function formatElapsed(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
 function badge(status, title) {
   const s = String(status || "unknown").toLowerCase().replace(/[^a-z_]/g, "");
   return `<span class="badge ${s}"${title ? ` title="${escapeHtml(title)}"` : ""}>${escapeHtml(s.replace(/_/g, " "))}</span>`;
@@ -72,17 +73,7 @@ function badge(status, title) {
 function shownValue(f) {
   if (!f) return "";
   if (f.corrected_value != null && f.corrected_value !== "") return String(f.corrected_value);
-  return f.original_value == null ? "" : String(f.original_value);
-}
-
-function humanize(name) {
-  // "accused[0].parent_or_spouse" → "accused 1 parent or spouse"
-  return String(name)
-    .replace(/^unmapped\[\d+\]\./, "")
-    .replace(/\[(\d+)\]\.?/g, (m, i) => ` ${Number(i) + 1} `)
-    .replace(/[._]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return f.value == null ? "" : String(f.value);
 }
 
 function setAlert(el, text, cls) {
@@ -112,6 +103,9 @@ function bindApiKeyForm() {
       const parts = [
         h.auth_enabled ? "authentication on" : "authentication off (local only, verification disabled)",
         h.ocr_available ? `OCR: ${h.ocr_engine}` : "OCR unavailable — scanned PDFs will fail",
+        h.ppstructure_available ? "PP-Structure on" : "PP-Structure off",
+        h.docling_available ? "Docling on" : "Docling off",
+        h.vl_available ? "VL on" : "VL off",
         h.offline_mode ? "offline mode" : "network allowed",
       ];
       status.textContent = parts.join(" · ");
@@ -214,7 +208,10 @@ function initResultsPage(documentId) {
     renderMeta(doc);
     if (["queued", "processing", "uploaded"].includes(doc.status)) {
       pollNote.classList.remove("hidden");
-      pollNote.textContent = `Processing… (status: ${doc.status}). Scanned pages are OCR'd locally and can take about a minute per page. This page refreshes automatically.`;
+      const p = doc.progress;
+      pollNote.textContent = p
+        ? `Processing — ${p.step} · ${formatElapsed(p.elapsed_seconds)} elapsed. Scanned pages are OCR'd locally (about 30–40 s per page on this machine). This page refreshes automatically.`
+        : `Waiting to start (status: ${doc.status}). This page refreshes automatically.`;
       root.innerHTML = "";
       setTimeout(load, 2500);
       return;
@@ -290,9 +287,22 @@ function initResultsPage(documentId) {
 
   function pagesTable(pages) {
     if (!pages || !pages.length) return "";
-    const rows = pages.map((p) => `<tr><td>${p.page_number}</td><td>${badge(p.text_source === "none" ? "missing" : p.text_source)}</td>
-      <td>${p.char_count}</td><td>${p.ocr_confidence == null ? "—" : escapeHtml(p.ocr_confidence)}</td><td>${escapeHtml(p.note || "")}</td></tr>`).join("");
-    return `<h3>Pages</h3><table class="field-table"><thead><tr><th>Page</th><th>Text from</th><th>Characters</th><th>OCR confidence</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const rows = pages.map((p) => `<tr><td>${p.page_number}</td>
+      <td>${badge(p.route || p.text_source || "—")}</td>
+      <td>${badge(p.page_status || (p.text_source === "none" ? "failed" : "ok"))}</td>
+      <td>${badge(p.text_source === "none" ? "missing" : p.text_source)}</td>
+      <td>${p.char_count}</td><td>${p.ocr_confidence == null ? "—" : escapeHtml(p.ocr_confidence)}</td>
+      <td>${escapeHtml(p.note || "")}</td></tr>`).join("");
+    return `<h3>Pages</h3><table class="field-table"><thead><tr><th>Page</th><th>Route</th><th>Status</th><th>Text from</th><th>Characters</th><th>OCR confidence</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function unresolvedSection(report) {
+    if (!report || !(report.items || []).length) return "";
+    const items = report.items.map((it) => `<li><strong>${escapeHtml(it.code)}</strong>${it.page != null ? ` (p.${escapeHtml(it.page)})` : ""}
+      ${badge(it.severity || "review")}: ${escapeHtml(it.detail || "")}</li>`).join("");
+    return `<div class="card section"><h3>Unresolved content (${report.items.length})${report.needs_review ? " — needs review" : ""}</h3>
+      <p class="muted">Gaps the pipeline did not invent values for. Confirm against the source PDF.</p>
+      <ul class="conflicts">${items}</ul></div>`;
   }
 
   function warningsList(warnings) {
@@ -300,80 +310,116 @@ function initResultsPage(documentId) {
     return `<ul class="warnings">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>`;
   }
 
-  /* A field row: label, value (editable), statuses, page, source text */
-  function fieldRow(label, f, canonical) {
-    if (!f) {
-      return `<tr class="missing-row"><td>${escapeHtml(label)}</td><td class="muted">not found in the source</td>
-        <td>${badge("missing")}</td><td>—</td><td></td></tr>`;
-    }
+  /* One field as printed in the PDF: its own label and its value (editable) */
+  function pdfFieldRow(f) {
     const value = shownValue(f);
     const corrected = f.corrected_value != null && f.corrected_value !== "";
-    const alts = (f.alternate_values || []).length
-      ? `<div class="muted small">other values in source: ${escapeHtml(f.alternate_values.join(" | "))}</div>` : "";
-    const notes = f.notes ? `<div class="muted small">${escapeHtml(f.notes)}</div>` : "";
-    const original = corrected ? `<div class="muted small">extracted: ${escapeHtml(f.original_value ?? "")}</div>` : "";
-    const src = f.source_text
-      ? `<details><summary>source</summary><div class="source-snippet">${escapeHtml(f.source_text)}</div></details>` : "";
-    const input = value.length > 120
-      ? `<textarea class="edit-input" data-canonical="${escapeHtml(canonical || f.canonical_name)}" data-initial="${escapeHtml(value)}">${escapeHtml(value)}</textarea>`
-      : `<input type="text" class="edit-input" data-canonical="${escapeHtml(canonical || f.canonical_name)}" data-initial="${escapeHtml(value)}" value="${escapeHtml(value)}" />`;
-    return `<tr>
-      <td>${escapeHtml(label)}${f.original_label ? `<div class="muted small">label: ${escapeHtml(f.original_label)}</div>` : ""}</td>
-      <td>${input}${original}${alts}${notes}</td>
-      <td>${badge(f.validation_status)} ${badge(corrected ? "corrected" : f.review_status)}</td>
-      <td>${f.source_page != null ? `p.${escapeHtml(f.source_page)}` : "—"}</td>
-      <td>${src}</td>
+    const multi = value.length > 90 || value.includes("\n");
+    const lines = Math.min(28, Math.max(3, Math.ceil(value.length / 95) + (value.match(/\n/g) || []).length));
+    const input = multi
+      ? `<textarea class="edit-input value-input" rows="${lines}" data-field-id="${escapeHtml(f.id)}" data-initial="${escapeHtml(value)}">${escapeHtml(value)}</textarea>`
+      : `<input type="text" class="edit-input value-input" data-field-id="${escapeHtml(f.id)}" data-initial="${escapeHtml(value)}" value="${escapeHtml(value)}" />`;
+    const pages = f.pages && f.pages.length > 1 ? `p.${f.pages[0]}–${f.pages[f.pages.length - 1]}` : `p.${f.page}`;
+    const label = f.label
+      ? escapeHtml(f.label)
+      : `<span class="muted"><em>(text before any label)</em></span>`;
+    const original = corrected
+      ? `<details><summary class="muted small">extracted value (before correction)</summary><div class="source-snippet">${escapeHtml(f.value)}</div></details>` : "";
+    return `<tr class="pdf-field" data-search="${escapeHtml(((f.label || "") + " " + value).toLowerCase())}">
+      <td class="serial-cell muted">${escapeHtml(f.serial || "")}</td>
+      <td class="label-cell">${label}</td>
+      <td>${input}${original}${f.notes ? `<div class="muted small">${escapeHtml(f.notes)}</div>` : ""}</td>
+      <td>${escapeHtml(pages)}${f.confidence != null ? `<div class="muted small" title="OCR confidence, not accuracy">OCR ${escapeHtml(f.confidence)}</div>` : ""}</td>
+      <td>${badge(corrected ? "corrected" : f.review_status)}</td>
     </tr>`;
   }
 
-  function fieldTable(rows) {
-    return `<table class="field-table"><thead><tr><th>Field</th><th>Value</th><th>Status</th><th>Page</th><th>Source</th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="muted">None</td></tr>`}</tbody></table>`;
-  }
-
-  const PERSON_ATTRS = [
-    ["serial_no", "Serial"], ["name", "Name"], ["parent_or_spouse", "Parent / spouse"], ["age", "Age"],
-    ["occupation", "Occupation / rank"], ["address", "Address"], ["contact", "Contact"],
-    ["identification", "ID number"], ["witness_type", "Role"], ["role", "Role"], ["arrest_status", "Arrest / custody"],
-  ];
-
-  function personCards(title, people) {
-    if (!people || !people.length) {
-      return `<div class="card section"><h3>${escapeHtml(title)}</h3><p class="muted">None found in the source (nothing was invented).</p></div>`;
+  /* Fields in reading order, one table per page where they start */
+  function pageSections(fields) {
+    if (!fields.length) {
+      return `<div class="card section"><p class="muted">No labels or values were detected in this PDF (nothing was invented).</p></div>`;
     }
-    const cards = people.map((p, i) => {
-      const rows = PERSON_ATTRS.filter(([k]) => p[k]).map(([k, label]) => fieldRow(label, p[k])).join("")
-        + (p.additional_fields || []).map((f) => fieldRow(humanize(f.canonical_name.split(".").pop()), f)).join("");
-      const heading = `${shownValue(p.serial_no) ? escapeHtml(shownValue(p.serial_no)) + ". " : ""}${escapeHtml(shownValue(p.name) || "(no name)")}`;
-      const conflict = Object.values(p).some((f) => f && f.validation_status === "conflicting") ? ` ${badge("conflicting")}` : "";
-      return `<details class="person-card" ${i < 3 ? "open" : ""}><summary><strong>${heading}</strong>${conflict}</summary>${fieldTable(rows)}</details>`;
-    }).join("");
-    return `<div class="card section"><h3>${escapeHtml(title)} (${people.length})</h3>${cards}</div>`;
+    const byPage = new Map();
+    fields.forEach((f) => {
+      if (!byPage.has(f.page)) byPage.set(f.page, []);
+      byPage.get(f.page).push(f);
+    });
+    return [...byPage.entries()].map(([page, list]) => `
+      <div class="card section page-section">
+        <h3>Page ${escapeHtml(page)} <span class="muted small">(${list.length} field${list.length === 1 ? "" : "s"})</span></h3>
+        <table class="field-table pdf-fields"><thead><tr><th>No.</th><th>Label (as in the PDF)</th><th>Value (as in the PDF)</th><th>Page</th><th>Review</th></tr></thead>
+        <tbody>${list.map(pdfFieldRow).join("")}</tbody></table>
+      </div>`).join("");
   }
 
-  function legalTable(title, sections, showRole) {
-    if (!sections || !sections.length) {
-      return `<div class="card section"><h3>${escapeHtml(title)}</h3><p class="muted">None found.</p></div>`;
+  /* raw_json tab: every line read from the PDF, loaded on first open */
+  function bindRawTab() {
+    let raw = null;
+    let text = "";
+    const body = document.getElementById("raw-body");
+    const select = document.getElementById("raw-page");
+    const msg = document.getElementById("raw-msg");
+
+    function show() {
+      const page = select.value;
+      const view = page ? { ...raw, pages: raw.pages.filter((p) => String(p.page) === page) } : raw;
+      text = JSON.stringify(view, null, 2);
+      body.classList.remove("muted");
+      body.innerHTML = text.split("\n").map((ln, i) =>
+        `<div class="raw-line"><span class="ln">${i + 1}</span><span class="code">${escapeHtml(ln)}</span></div>`).join("");
     }
-    const rows = sections.map((s) => {
-      const pages = (s.source_pages || []).map((p) => `p.${p}`).join(", ") || "—";
-      return `<tr><td>${escapeHtml(shownValue(s.act) || "—")}</td><td>${escapeHtml(shownValue(s.section) || "—")}</td>
-        ${showRole ? `<td>${badge(s.provision_role || "reference")}</td>` : ""}
-        <td>${s.act ? badge(s.act.validation_status) : ""}</td><td>${escapeHtml(pages)}</td>
-        <td>${s.section && s.section.source_text ? `<details><summary>source</summary><div class="source-snippet">${escapeHtml(s.section.source_text)}</div></details>` : ""}</td></tr>`;
-    }).join("");
-    return `<div class="card section"><h3>${escapeHtml(title)}</h3>
-      <table class="field-table"><thead><tr><th>Act</th><th>Section</th>${showRole ? "<th>Role</th>" : ""}<th>Status</th><th>Pages</th><th>Source</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`;
-  }
 
-  function conflictsSection(conflicts) {
-    if (!conflicts || !conflicts.length) return "";
-    const items = conflicts.map((c) => `<li><strong>${escapeHtml(humanize(c.field_name))}</strong> <span class="mono small">${escapeHtml(c.field_name)}</span>:
-      ${(c.values || []).map((v) => `<code>${escapeHtml(v)}</code>`).join(" vs ")}
-      <div class="muted small">${escapeHtml(c.evidence || "")} · pages ${escapeHtml((c.source_pages || []).join(", ") || "—")} · ${escapeHtml(c.resolution || "unresolved")}</div></li>`).join("");
-    return `<div class="card section"><h3>Source conflicts (${conflicts.length}, unresolved)</h3>
-      <p class="muted">The source document itself disagrees on these values. Nothing was chosen automatically — confirm the right value below.</p>
-      <ul class="conflicts">${items}</ul></div>`;
+    async function loadRaw() {
+      if (raw) return;
+      try {
+        raw = await api(`${docUrl}/raw`);
+        raw.pages.forEach((p) => {
+          const opt = document.createElement("option");
+          opt.value = String(p.page);
+          opt.textContent = `Page ${p.page} (${p.lines.length} lines)`;
+          select.appendChild(opt);
+        });
+        show();
+      } catch (err) {
+        body.textContent = err.message;
+      }
+    }
+
+    root.querySelectorAll(".tab").forEach((btn) => {
+      btn.onclick = () => {
+        const tab = btn.dataset.tab;
+        root.querySelectorAll(".tab").forEach((b) => {
+          b.classList.toggle("active", b === btn);
+          b.setAttribute("aria-selected", String(b === btn));
+        });
+        document.getElementById("tab-fields").classList.toggle("hidden", tab !== "fields");
+        document.getElementById("tab-raw").classList.toggle("hidden", tab !== "raw");
+        if (tab === "raw") loadRaw();
+      };
+    });
+    select.onchange = () => raw && show();
+    document.getElementById("raw-copy").onclick = async () => {
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        setAlert(msg, "Raw JSON copied.", "ok");
+      } catch (err) {
+        setAlert(msg, "Copy was blocked by the browser; use Download instead.", "error");
+      }
+    };
+    document.getElementById("raw-download").onclick = () => {
+      if (!text) return;
+      const name = ((raw && raw.file_name) || "document").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9._-]+/g, "_");
+      const page = select.value ? `_page${select.value}` : "";
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name}${page}_raw.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    };
   }
 
   function renderResults(doc, payload) {
@@ -382,22 +428,14 @@ function initResultsPage(documentId) {
       root.innerHTML = `<div class="alert info">No results yet.</div>`;
       return;
     }
-    const banner = r.extraction_status === "partial"
-      ? `<div class="alert warn"><strong>Partial extraction.</strong> Some pages or stages failed; fields from those pages are missing. See pipeline stages below.</div>`
-      : "";
-    const caseRows = CORE_CASE_FIELDS.concat(Object.keys(r.case || {}).filter((k) => !CORE_CASE_FIELDS.includes(k)))
-      .filter((k, i, a) => a.indexOf(k) === i)
-      .map((k) => fieldRow(humanize(k), r.case ? r.case[k] : null, k)).join("");
-    const people = [
-      ["Complainant", r.complainant ? [r.complainant] : []],
-      ["Investigating officers", r.investigating_officers || []],
-    ];
-    const narrative = ["brief_facts", "investigation_narrative", "final_conclusions"]
-      .filter((k) => r[k]).map((k) => fieldRow(humanize(k), r[k])).join("");
-    const evidence = (r.seized_property || []).map((s) => fieldRow("seized property", s.description)).join("")
-      + (r.lab_results || []).map((l) => fieldRow("lab finding", l.findings)).join("");
-    const related = (r.related_case_references || []).map((f) => fieldRow("other case (narrative)", f)).join("");
-    const unmapped = (r.unmapped_fields || []).map((f) => fieldRow(f.original_label || humanize(f.canonical_name), f)).join("");
+    const fields = r.fields || [];
+    const legacy = (r.extraction_warnings || []).some((w) => w.startsWith("REPROCESS_REQUIRED"));
+    const banner = legacy
+      ? `<div class="alert warn"><strong>Reprocess required.</strong> This result was made by an older version with a fixed field list. Click <em>Reprocess</em> to detect the fields in this PDF.</div>`
+      : r.extraction_status === "partial"
+        ? `<div class="alert warn"><strong>Partial extraction.</strong> Some pages could not be read fully; their fields may be missing. See pipeline stages and pages below.</div>`
+        : "";
+    const labelled = fields.filter((f) => f.label).length;
 
     root.innerHTML = `
       <div class="card">
@@ -405,25 +443,40 @@ function initResultsPage(documentId) {
         ${banner}
         <div class="meta-grid">
           <div class="meta-item"><div class="label">Extraction</div><div class="value">${badge(r.extraction_status)}</div></div>
-          <div class="meta-item"><div class="label">Document type</div><div class="value">${escapeHtml(shownValue(r.document_info?.document_type) || "—")}</div></div>
-          <div class="meta-item"><div class="label">Model confidence (not accuracy)</div><div class="value">${escapeHtml(r.overall_confidence ?? "—")}</div></div>
-          <div class="meta-item"><div class="label">Conflicts</div><div class="value">${(r.source_conflicts || []).length}</div></div>
+          <div class="meta-item"><div class="label">Document type</div><div class="value">${escapeHtml(r.document_info?.document_type || "—")}</div></div>
+          <div class="meta-item"><div class="label">Fields found</div><div class="value">${fields.length} (${labelled} with a label)</div></div>
+          <div class="meta-item"><div class="label">OCR confidence (not accuracy)</div><div class="value">${escapeHtml(r.overall_confidence ?? "—")}</div></div>
           <div class="meta-item"><div class="label">Schema</div><div class="value">${escapeHtml(r.schema_version)}</div></div>
         </div>
         ${warningsList(r.extraction_warnings)}
         <details><summary>Pipeline stages and pages</summary>${stagesTable(r.stage_results)}${pagesTable(r.page_summaries)}</details>
       </div>
-      ${conflictsSection(r.source_conflicts)}
-      <div class="card section"><h3>Case details</h3>${fieldTable(caseRows)}</div>
-      ${legalTable("Acts & sections (applicable)", r.acts_and_sections, true)}
-      ${personCards("Accused persons", r.accused_persons)}
-      ${personCards("Witnesses", r.witnesses)}
-      ${people.map(([t, list]) => personCards(t, list)).join("")}
-      ${legalTable("Other legal references (procedural / superseded / cited)", r.other_legal_references, true)}
-      <div class="card section"><h3>Other cases mentioned in the narrative</h3>
-        <p class="muted">Not the primary FIR — kept separate so they never overwrite case details.</p>${fieldTable(related)}</div>
-      <div class="card section"><h3>Narrative & evidence</h3>${fieldTable(narrative + evidence)}</div>
-      <div class="card section"><h3>Unmapped form fields</h3><p class="muted">Recognised in the form but not part of the schema — preserved as found.</p>${fieldTable(unmapped)}</div>
+      <div class="tabs" role="tablist">
+        <button class="tab active" role="tab" data-tab="fields" aria-selected="true">Fields</button>
+        <button class="tab" role="tab" data-tab="raw" aria-selected="false">raw_json</button>
+      </div>
+      <div id="tab-raw" class="hidden">
+        <div class="card section">
+          <div class="row">
+            <label class="muted small" for="raw-page">Page</label>
+            <select id="raw-page"><option value="">All pages</option></select>
+            <button class="btn secondary" id="raw-copy">Copy</button>
+            <button class="btn secondary" id="raw-download">Download JSON</button>
+            <span class="muted small">Every text line read from the PDF, exactly as read, top to bottom.</span>
+          </div>
+          <div id="raw-msg" class="hidden"></div>
+          <div id="raw-body" class="raw-json muted">Loading…</div>
+        </div>
+      </div>
+      <div id="tab-fields">
+      ${unresolvedSection(r.unresolved_content)}
+      <div class="card section">
+        <div class="row">
+          <input id="field-filter" type="search" placeholder="Filter by label or value…" />
+          <span class="muted small">Labels and values are shown exactly as detected in this PDF, in reading order.</span>
+        </div>
+      </div>
+      ${pageSections(fields)}
       <div class="card section">
         <h3>Review</h3>
         <p class="muted">Only fields you change are saved as corrections; extracted values are never overwritten.</p>
@@ -437,14 +490,23 @@ function initResultsPage(documentId) {
         </div>
         <div id="save-msg" class="hidden"></div>
         <details id="history"><summary>Correction history</summary><div id="history-body" class="muted">Loading…</div></details>
+      </div>
       </div>`;
 
+    bindRawTab();
+
+    document.getElementById("field-filter").addEventListener("input", (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      root.querySelectorAll("tr.pdf-field").forEach((tr) => {
+        tr.classList.toggle("hidden", Boolean(q) && !tr.dataset.search.includes(q));
+      });
+    });
     const msg = document.getElementById("save-msg");
     document.getElementById("save-corrections").onclick = async () => {
       const corrections = [];
       root.querySelectorAll(".edit-input").forEach((inp) => {
         if (inp.value !== inp.dataset.initial) {
-          corrections.push({ canonical_name: inp.dataset.canonical, corrected_value: inp.value, review_status: "corrected" });
+          corrections.push({ field_id: inp.dataset.fieldId, corrected_value: inp.value, review_status: "corrected" });
         }
       });
       if (!corrections.length) {

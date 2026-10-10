@@ -107,6 +107,35 @@ def sentence_bounds(text: str, pos: int, max_len: int = 700) -> tuple:
     return start, end
 
 
+def join_narrative_lines(lines) -> str:
+    """Visual lines of a narrative → readable paragraphs, words unchanged.
+
+    Lines of one paragraph run the full text width; a line that ends a sentence
+    well short of that width ends its paragraph, and a short line without end
+    punctuation (heading, salutation, signature) stands on its own line.
+    """
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in lines]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return ""
+    widths = sorted(len(ln) for ln in lines)
+    full = widths[(len(widths) * 3) // 4]  # a typical full-width line
+    out = ""
+    for i, ln in enumerate(lines):
+        if out:
+            prev = lines[i - 1]
+            if len(prev) < 0.8 * full and re.search(r"[.:;!?)]$", prev):
+                out += "\n\n"
+            elif len(prev) < 0.5 * full:
+                out += "\n"
+            elif prev.endswith("-") and ln[:1].islower():
+                pass  # hyphenated across the line break: keep the hyphen, no space
+            else:
+                out += " "
+        out += ln
+    return out
+
+
 def compact(text: str) -> str:
     """Lowercase letters/digits only — matches glued and spaced variants alike."""
     return re.sub(r"[^a-z0-9]", "", strip_accents(text or "").lower())

@@ -95,12 +95,23 @@ def create_app() -> FastAPI:
             response.headers.setdefault("Cache-Control", "no-store")
         return response
 
+    def asset_version() -> str:
+        """Changes whenever app.js / styles.css change, so browsers never keep an old copy."""
+        stamps = []
+        for rel in ("js/app.js", "css/styles.css"):
+            try:
+                stamps.append(str(int((BASE_DIR / "static" / rel).stat().st_mtime)))
+            except OSError:
+                stamps.append("0")
+        return "-".join(stamps)
+
     def page_context(request: Request, **extra):
         return {
             "request": request,
             "api_key_header": settings.api_key_header,
             "app_name": settings.app_name,
             "docs_enabled": settings.api_docs_enabled,
+            "asset_version": asset_version(),
             **extra,
         }
 

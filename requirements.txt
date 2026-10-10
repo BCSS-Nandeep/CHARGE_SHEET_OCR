@@ -22,11 +22,16 @@ pytest==8.3.4
 pytest-asyncio==0.25.0
 reportlab==4.2.5
 
-# Local OCR for scanned PDFs (install separately; models must be prefetched on a
+# Local OCR / layout stack (install separately; models must be prefetched on a
 # controlled network — downloads are blocked at runtime in offline mode).
 # Verified on this deployment: paddlepaddle 3.3.1 + paddleocr 3.7.0 (PP-OCRv6 models)
 # with OCR_ENABLE_MKLDNN=false.
 # paddlepaddle==3.3.1
 # paddleocr==3.7.0
+# PP-Structure ships with recent paddleocr (PPStructure / PPStructureV3).
+# Optional digital-form assist (Gate 2):
+# docling
+# Optional hard-page VL (Gate 4; GPU recommended):
+# paddlex   # or paddleocr with PaddleOCRVL
 # Fallback: pytesseract + the Tesseract binary (pytesseract alone is not an OCR engine)
 # pytesseract==0.3.13

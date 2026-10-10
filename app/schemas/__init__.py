@@ -11,9 +11,8 @@ from app.schemas.api_responses import (
 )
 from app.schemas.charge_sheet import (
     ChargeSheetData,
-    ExtractedField,
+    PdfField,
     SCHEMA_VERSION,
-    SourceConflict,
 )
 from app.schemas.document import DocumentCreate, DocumentMeta, DocumentStatus
 
@@ -25,9 +24,9 @@ __all__ = [
     "DocumentStatus",
     "DocumentStatusResponse",
     "ErrorResponse",
-    "ExtractedField",
     "FieldCorrectionRequest",
     "HealthResponse",
+    "PdfField",
     "ProcessingAcceptedResponse",
     "ResultsResponse",
     "SCHEMA_VERSION",

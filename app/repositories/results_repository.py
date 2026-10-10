@@ -10,17 +10,23 @@ from sqlalchemy.orm import Session
 
 from app.models import ResultRecord
 from app.schemas.charge_sheet import ChargeSheetData, ReviewStatus
+from app.schemas.raw import RawDocument
 
 
 class ResultsRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def save(self, document_id: str, data: ChargeSheetData) -> ResultRecord:
+    def save(self, document_id: str, data: ChargeSheetData, raw: Optional[RawDocument] = None) -> ResultRecord:
+        """Store results; ``raw`` (when given) replaces the stored raw lines — a reprocess
+        writes both, a correction only the results."""
         existing = self.get_record(document_id)
         payload = data.model_dump_json()
+        raw_json = raw.model_dump_json() if raw is not None else None
         if existing:
             existing.payload_json = payload
+            if raw is not None:
+                existing.raw_json = raw_json
             existing.overall_confidence = data.overall_confidence
             existing.updated_at = datetime.utcnow()
             self.db.commit()
@@ -29,6 +35,7 @@ class ResultsRepository:
         row = ResultRecord(
             document_id=document_id,
             payload_json=payload,
+            raw_json=raw_json,
             overall_confidence=data.overall_confidence,
         )
         self.db.add(row)
@@ -49,6 +56,12 @@ class ResultsRepository:
             return None
         return ChargeSheetData.model_validate(json.loads(row.payload_json))
 
+    def get_raw(self, document_id: str) -> Optional[RawDocument]:
+        row = self.get_record(document_id)
+        if not row or not row.raw_json:
+            return None
+        return RawDocument.model_validate(json.loads(row.raw_json))
+
     def apply_corrections(self, document_id: str, corrections: dict) -> Optional[ChargeSheetData]:
         data = self.get(document_id)
         if not data:
@@ -58,7 +71,8 @@ class ResultsRepository:
             field = field_map.get(name)
             if not field:
                 continue
-            field.corrected_value = corr.get("corrected_value")
+            value = corr.get("corrected_value")
+            field.corrected_value = None if value is None else str(value)
             status = corr.get("review_status", "corrected")
             try:
                 field.review_status = ReviewStatus(status)

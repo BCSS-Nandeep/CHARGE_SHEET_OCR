@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -17,6 +19,7 @@ from app.schemas.api_responses import (
     VerifyRequest,
 )
 from app.schemas.document import DocumentStatus
+from app.schemas.raw import RawResponse
 from app.security.auth import Principal, require_api_key, require_role
 
 router = APIRouter(prefix="/api/v1/documents", tags=["results"])
@@ -69,6 +72,38 @@ def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsRespo
 
 
 @router.get(
+    "/{document_id}/raw",
+    response_model=RawResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def get_raw(document_id: str, download: bool = False, db: Session = Depends(get_db)):
+    """Every text line read from the PDF, page by page, exactly as read (no labels or grouping).
+
+    ``?download=true`` returns the same JSON as a file attachment.
+    """
+    repo = DocumentRepository(db)
+    doc = _get_live(repo, document_id)
+    if doc.status in (DocumentStatus.UPLOADED.value, DocumentStatus.QUEUED.value, DocumentStatus.PROCESSING.value):
+        raise HTTPException(status_code=409, detail="Document is still being processed")
+    raw = ResultsRepository(db).get_raw(document_id)
+    if raw is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No raw JSON stored for this document (processed by an older version) — reprocess it to generate one",
+        )
+    body = RawResponse(document_id=doc.id, file_name=doc.original_filename, **raw.model_dump())
+    audit("raw_viewed", document_id=document_id, download=download)
+    if not download:
+        return body
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(doc.original_filename).stem)[:120] or "document"
+    return Response(
+        content=body.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{stem}_raw.json"'},
+    )
+
+
+@router.get(
     "/{document_id}/corrections",
     dependencies=[Depends(require_api_key)],
 )
@@ -98,15 +133,16 @@ def patch_fields(
     if data is None:
         raise HTTPException(status_code=404, detail="Results not available")
     fmap = data.field_map()
-    unknown = [c.canonical_name for c in body.corrections if c.canonical_name not in fmap]
+    unknown = [c.field_id for c in body.corrections if c.field_id not in fmap]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown field(s): {', '.join(unknown[:20])}")
 
+    # The correction history stores the field id in its canonical_name column
     corr_payload = [
         {
-            "canonical_name": c.canonical_name,
+            "canonical_name": c.field_id,
             "corrected_value": c.corrected_value,
-            "original_value": None if fmap[c.canonical_name].original_value is None else str(fmap[c.canonical_name].original_value),
+            "original_value": fmap[c.field_id].value,
             "review_status": c.review_status.value,
             "notes": c.notes,
             "reviewer": principal.name,

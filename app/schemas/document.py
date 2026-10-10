@@ -27,6 +27,11 @@ class DocumentCreate(BaseModel):
     size_bytes: int
 
 
+class ProcessingProgress(BaseModel):
+    step: str
+    elapsed_seconds: float
+
+
 class DocumentMeta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +53,7 @@ class DocumentMeta(BaseModel):
     updated_at: datetime
     processed_at: Optional[datetime] = None
     schema_version: Optional[str] = None
+    progress: Optional[ProcessingProgress] = None  # only while this process is working on it
 
 
 class DocumentFilter(BaseModel):

@@ -30,24 +30,12 @@ sys.path.insert(0, str(ROOT))
 
 METRIC_ORDER = [
     ("classification", "Document classification accuracy"),
-    ("case_fields", "Case-field accuracy (incl. correctly blank fields)"),
-    ("case_precision", "Case-field mapping precision"),
-    ("case_recall", "Case-field recall"),
-    ("accused_precision", "Accused record precision"),
-    ("accused_recall", "Accused record recall"),
-    ("witnesses_precision", "Witness record precision"),
-    ("witnesses_recall", "Witness record recall"),
-    ("ios_precision", "Investigating-officer precision"),
-    ("ios_recall", "Investigating-officer recall"),
-    ("names_exact", "Person names spelled exactly (matched records)"),
-    ("attributes", "Person attributes correct (matched records)"),
-    ("legal_precision", "Legal section precision"),
-    ("legal_recall", "Legal section recall"),
-    ("related_refs_precision", "Other-case FIR reference precision"),
-    ("related_refs_recall", "Other-case FIR reference recall"),
-    ("conflict_precision", "Conflict detection precision"),
-    ("conflict_recall", "Conflict detection recall"),
-    ("completeness", "Completeness (ground-truth items extracted correctly)"),
+    ("case_values", "Expected case values found in a field"),
+    ("case_values_form", "Expected case values found in a form field (not only the narrative)"),
+    ("names", "Expected person names found in a form field"),
+    ("legal_sections", "Expected act + section found together in one field"),
+    ("completeness", "Completeness (expected items found in any field)"),
+    ("labelled_fields", "Fields with a label (descriptive, not accuracy)"),
     ("ocr_lines", "OCR reference lines recognised (similarity >= 0.9)"),
 ]
 
@@ -104,7 +92,8 @@ def main() -> int:
         )
         evals.append(ev)
         print(f"{gt.document_id:45s} {data.extraction_status.value:9s} {time.time() - t0:6.1f}s  "
-              f"case={ev.c('case_fields').fmt():14s} mismatches={len(ev.mismatches)}")
+              f"case={ev.c('case_values_form').fmt():14s} complete={ev.c('completeness').fmt():14s} "
+              f"mismatches={len(ev.mismatches)}")
 
     total = aggregate(evals)
     synthetic = aggregate([e for e in evals if not e.private])
@@ -119,6 +108,11 @@ def main() -> int:
         "**These are measured counts on a small dataset, not a general accuracy claim.** "
         "Extractor confidence scores are not accuracy and are not used here. Every value is shown as "
         "`ratio (numerator/denominator)`; see `evaluation/metrics.py` for exact definitions.",
+        "",
+        "Schema 2.0.0 returns each PDF's own labels and values (no fixed field list). The ground truth "
+        "records expected *values*, not labels, so these metrics measure whether each expected value was "
+        "found and paired into a form field; label text and expected-blank fields are not scored, and "
+        "precision (extra / wrong fields) is not measured.",
         "",
         f"Dataset: {len(evals)} document(s) evaluated — {sum(1 for e in evals if e.private)} real "
         f"(ground truth transcribed from the source and awaiting human confirmation), "
@@ -139,7 +133,7 @@ def main() -> int:
                 f"{synthetic[key].fmt() if key in synthetic else '—'} |"
             )
     lines += ["", "## Per document", ""]
-    keys = ["case_fields", "accused_recall", "witnesses_recall", "legal_recall", "conflict_recall", "completeness"]
+    keys = ["case_values", "case_values_form", "names", "legal_sections", "completeness"]
     lines.append("| Document | Layout | Extraction | " + " | ".join(keys) + " |")
     lines.append("|---|---|---|" + "---|" * len(keys))
     for ev in evals:
@@ -152,6 +146,8 @@ def main() -> int:
         lines.append(f"- `{ev.document_id}`: " + ("none" if not ev.mismatches else ""))
         for m in ev.mismatches:
             lines.append(f"  - {m}")
+        for n in ev.notes:
+            lines.append(f"  - note: {n}")
     lines += [
         "",
         "Mismatch details for real documents are written to `tests/fixtures/private/ACCURACY_DETAILS.md` "
@@ -163,6 +159,8 @@ def main() -> int:
             lines.append(f"- `{ev.document_id}`: {len(ev.mismatches)} mismatch(es)")
             for m in ev.mismatches:
                 lines.append(f"  - {m}")
+            for n in ev.notes:
+                lines.append(f"  - note: {n}")
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     Path(args.report).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nWrote {args.report}")

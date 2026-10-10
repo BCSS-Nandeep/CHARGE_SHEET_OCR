@@ -2,6 +2,10 @@
 
 Date: 2026-10-09 · Baseline: commit `9198568` · Measured results: [ACCURACY_REPORT.md](ACCURACY_REPORT.md)
 
+> **2026-10-10 — schema 2.0.0.** The fixed field list (case / accused / witnesses / acts / conflicts /
+> validation) described in §1–§2 was replaced by a per-document field list: labels and values exactly as
+> printed in each PDF. See §10. Sections 1–9 describe the 1.x pipeline and are kept as the audit record.
+
 ## 1. Architecture and data flow (after remediation)
 
 ```text
@@ -90,12 +94,32 @@ crept into code comments — the test caught them and they were replaced.
   **no Tesseract binary**.
 - Baseline: every OCR call failed (oneDNN kernel error), the failure was logged as "no text", and the
   document was marked completed with confidence 0.5 and an empty result.
-- Now: OCR runs locally (≈60 s/page on this CPU at 200 DPI) with the network guard active; text boxes are
-  turned into table rows and reading-order text; per-page source, OCR engine and confidence are recorded.
-  The real 4-page scan (header table + ruled form, photographed with a curled page edge) extracts all form
-  fields except the court name (OCR missed the curved heading line) — see the accuracy report.
-- Limits: no deskew/dewarp (curled page edges degrade the rows next to the fold), English model only
-  (`OCR_LANG`), no handwriting support.
+- Now: OCR runs locally with the network guard active; text boxes are turned into table rows and
+  reading-order text; per-page source, OCR engine and confidence are recorded.
+- Speed (i7-14700, CPU only): ≈35 s/page, ≈135–145 s for a 4-page scan, down from ≈270 s. Settings:
+  `OCR_CPU_THREADS=8` (more threads spill onto efficiency cores and were slower), detection on an image
+  limited to 1600 px (`OCR_DET_LIMIT_SIDE_LEN`), `OCR_DET_BOX_THRESH=0.3` (Paddle's 0.6 dropped faint
+  court headings and first narrative lines; 0.3 adds ≈10 % detection time). Parallel page workers and
+  oneDNN were measured and rejected (slower / crashes).
+- Rotated photographs: the page angle is measured from the OCR line polygons and boxes are straightened
+  before row assignment (a 3–4° tilt previously moved values into the previous row); lines rotated >20°
+  from the page (bleed-through, stamps) are dropped. Vertical overlap is judged on each line's central
+  line-height so tall boxes of curved lines do not join the row above, and page-wide heading/narrative
+  lines never merge into a narrow label cell.
+- OCR misreads handled without inventing text: one comma in a date (`25.10,2021`), `10`/`1O` for `IO` in a
+  witness role (with a note recording the raw reading). Words the OCR did not return (e.g. a missing
+  `FIRST` in a court heading) stay missing.
+- Real scans: FIR 242/2021 (4 pages) extracts all 10 ground-truth case fields; FIR 268/2021 (same template,
+  user-supplied, no ground truth file yet) was checked by hand — case fields, accused, 7 witnesses and
+  brief facts correct apart from words the OCR did not read.
+- Narrative (schema 1.2.0): one `narrative` field instead of brief facts / investigation / conclusions —
+  splitting on headings cut sentences ("Investigation revealed that on …" was taken as a heading). Layout
+  rule: once a narrative start (Brief facts label, salutation, "Facts of the case are that") appears, it
+  begins its own cell and nothing below it continues a form row; previously, when OCR missed the serial
+  numbers of the last form rows, the whole narrative was chained into the row above. Scanner watermarks
+  and header/footer lines repeated on ≥2 pages are dropped; narrative lines with fewer than 3 letters or
+  digits (stamp/signature specks) are dropped.
+- Limits: no dewarp (strongly curled page edges), English model only (`OCR_LANG`), no handwriting support.
 
 ## 5. Accuracy methodology review
 
@@ -169,12 +193,61 @@ Limits:
 
 ## 9. Remaining limitations
 
-- Conflicts that need narrative understanding are not detected: a person mentioned without parentage
-  (e.g. a spelling variant of an accused's name in passing), and dates of events (arrest date in a remark vs.
-  the narrative).
-- Glued-text exports keep glued words in values (e.g. court name `JUDICIALFIRSTCLASSMAGISTRATE,MEDAK`);
-  values are faithful to the source but not re-spaced.
-- OCR: no deskew/dewarp; rows at a curled page edge can be mis-assigned; English only.
-- Seized property / lab results are only taken from labelled fields and one narrative sentence.
+- Labels are recognised from structure (header-table label rows, form-row label cells, text before a colon,
+  heading lines) plus a vocabulary used only for recognition. A heading printed as plain text that is not
+  in the vocabulary and has no colon is read as part of the previous value.
+- Text printed without a label (a court heading above the narrative) is kept inside the neighbouring value;
+  it is not made into a field of its own.
+- Header tables whose label row is split over two visual rows by OCR (tilted photo) are not paired; their
+  labels and values then appear as one field in reading order (seen on one CCTNS sample, page 1).
+- Values are as printed: OCR misreads ("10" for "IO", "25.10,2021") are not corrected, and nothing is
+  validated or cross-checked any more (dates, FIR/year, conflicting mentions) — that requires knowing what a
+  field means, which the 2.0.0 design deliberately does not assume.
+- Glued-text exports keep glued words in values where spacing cannot be restored safely.
+- OCR: rotation is corrected but not page curl (dewarp); English only; ≈35 s/page on CPU.
 - Single-tenant authorization; API keys rather than an identity provider.
-- Accuracy has not been measured on a held-out set of unseen templates (see §5).
+- Accuracy has not been measured on a held-out set of unseen templates (see §5); the 2.0.0 metrics measure
+  whether expected values were found and paired, not label text or precision.
+
+## 10. Schema 2.0.0 — the PDF decides the fields (2026-10-10)
+
+Requested design: no standard template; detect what is a label and what is its value in the uploaded PDF
+and return only those, in the API and the UI.
+
+```text
+pages (native text and/or OCR, layout rows, header pairs, free lines; watermarks removed)
+  └► FieldBuilder (app/services/field_builder.py), item by item in reading order:
+       header-table pair            → field (label, value)
+       form row  [no. | label | value cells]
+                 label cell holding its own pairs ('District: X. Police Station: Y') → one field per pair
+                 value cell starting with a label ('03. Dated: …')                      → its own field
+       row under a list heading     → appended to that heading's value ("01 | name | role")
+       free line 'Label: value' / 'Label   value' / heading line → new field
+       other free line              → appended to the current value (continuity, across pages)
+       from the narrative start     → one running value, paragraphs joined; colons inside are not split
+  └► ChargeSheetData.fields: [{id "p1-03", page, pages, serial, label, value, source, text_block,
+                                confidence, corrected_value, review_status}]
+```
+
+Removed with the fixed list: entity extraction (accused / witness attribute splitting), the legal-section
+parser, conflict detection, value validation, related-case references, and their tests. Corrections are
+addressed by field id and re-applied after reprocessing only when the extracted value is unchanged. Results
+stored by 1.x load with no fields and a `REPROCESS_REQUIRED` warning (13 stored results on this machine).
+
+Follow-up fixes (same day, from a 6-page scanned Medak Town charge sheet):
+
+- **Warped photocopies:** the value column sat 15–35 px lower than its labels while each text line stayed
+  straight, so every value landed one row too late. `layout_service.column_offsets` measures, strip by
+  strip from left to right, the vertical offset that lines boxes up with the text to their left and moves
+  them back; it is applied only with clear evidence (straight pages and narrative pages keep 0). A single
+  rotation was tried first and rejected: rotating straight lines made them taller than a row.
+- A centred title just above the first form row ("CHARGE SHEET / (Under sec. 173 Cr.P.C.)") is no longer
+  merged into row 01; a court heading after the last form row no longer joins that row.
+- An unlabelled narrative takes the court heading printed directly above it (including wrapped capital
+  lines) as its label, e.g. "IN THE HON'BLE … MAGISTRATE COURT AT …".
+- List rows drop separator columns that hold no letters or digits (":", "• •").
+
+Measured after the change (`scripts/evaluate.py --ocr`, ground-truth files unchanged apart from removing
+`known_gaps` entries that no longer apply): every expected value found — case values 72/72, names 63/63,
+act + section 16/16, OCR reference lines 30/30; 68/72 case values are in a labelled form field, the other 4
+are court names / jurisdiction printed without a label above the narrative. Variant bench: 75/75.
