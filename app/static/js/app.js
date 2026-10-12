@@ -1,6 +1,6 @@
-/* Charge Sheet UI — talks to the local REST API. */
+/* Interrogation Report UI — talks to the local REST API. */
 
-const API_KEY_STORAGE = "cs_api_key";
+const API_KEY_STORAGE = "ir_api_key";
 const API_KEY_HEADER = (document.body && document.body.dataset.apiKeyHeader) || "X-API-Key";
 
 /* ---------- helpers ---------- */
@@ -149,8 +149,9 @@ function initUploadPage() {
 
   uploadBtn.addEventListener("click", () => {
     if (!selected) return;
-    if (!selected.name.toLowerCase().endsWith(".pdf")) {
-      setAlert(statusEl, "Only PDF files are accepted.", "error");
+    const lowerName = selected.name.toLowerCase();
+    if (!lowerName.endsWith(".pdf") && !lowerName.endsWith(".docx")) {
+      setAlert(statusEl, "Only PDF and DOCX files are accepted.", "error");
       return;
     }
     uploadBtn.disabled = true;

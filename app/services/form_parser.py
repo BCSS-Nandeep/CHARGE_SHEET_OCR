@@ -218,10 +218,19 @@ def is_heading(text: str) -> bool:
     """A label printed on its own line, its value below ('Particulars of the accused')."""
     t = text.strip().rstrip(":").strip()
     words = t.split()
-    if not t or len(words) > 12 or re.search(r"(?i)\b(?:s/o|d/o|w/o|r/o)\b", t):
+    if not t or len(words) > 14 or re.search(r"(?i)\b(?:s/o|d/o|w/o|r/o)\b", t):
         return False
-    if text.strip().endswith(":") and len(words) <= 8 and t[0].isalpha():
+    if text.strip().endswith(":") and len(words) <= 10 and t[0].isalpha():
         return True
+    # Numbered IR section titles: "2. UNIQUE IDENTIFIERS", "3. PHYSTCAL FEATURES"
+    if re.match(r"^\d{1,2}\.\s+[A-Za-z]", t) and len(words) <= 12:
+        body = re.sub(r"^\d{1,2}\.\s*", "", t)
+        letters = [c for c in body if c.isalpha()]
+        if letters and sum(c.isupper() for c in letters) >= 0.7 * len(letters):
+            return True
+        canon_b, score_b = recognise(body)
+        if canon_b and score_b >= 0.85:
+            return True
     if list_heading_kind(t):
         return True
     canon, score = recognise(t)

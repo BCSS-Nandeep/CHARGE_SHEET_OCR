@@ -84,10 +84,15 @@ def get_source_pdf(
     doc = _get_live(repo, document_id)
     path = resolve_under(settings.upload_dir, doc.stored_filename)
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Source PDF not available")
+        raise HTTPException(status_code=404, detail="Source file not available")
+    name = (doc.original_filename or path.name).lower()
+    if name.endswith(".docx"):
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        media = "application/pdf"
     return FileResponse(
         path,
-        media_type="application/pdf",
+        media_type=media,
         filename=doc.original_filename,
         content_disposition_type="inline",
         headers={"Cache-Control": "no-store"},

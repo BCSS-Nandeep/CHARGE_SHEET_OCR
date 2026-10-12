@@ -1,7 +1,8 @@
-"""Canonical field synonym dictionary for Indian charge-sheet forms.
+"""Canonical field synonym dictionary for Interrogation Report (IR) forms.
 
-Labels vary widely across states and form revisions. Matching is
-case-insensitive and tolerates punctuation / numbering differences.
+Labels vary across PS units and form revisions. Matching is case-insensitive
+and tolerates punctuation / numbering differences. Synonyms are used only to
+*recognise* that a phrase is a label — labels are never renamed in the result.
 """
 
 from __future__ import annotations
@@ -10,11 +11,396 @@ from typing import Dict, List
 
 # canonical_name -> list of label patterns / synonyms
 FIELD_SYNONYMS: Dict[str, List[str]] = {
+    # --- Section headings (recognition only; value starts below) ---
+    "individual_particulars": [
+        "individual particulars",
+    ],
+    "unique_identifiers": [
+        "unique identifiers",
+        "unique identifier",
+    ],
+    "physical_features": [
+        "physical features",
+        "phystcal features",  # printed typo on many IR forms
+        "physcial features",
+    ],
+    "socio_economic_profile": [
+        "socio / economic profile",
+        "socio economic profile",
+        "socio/economic profile",
+    ],
+    "period_of_offence_section": [
+        "period of offence",
+    ],
+    # --- 1. Individual particulars ---
+    "name": [
+        "name",
+        "first name",
+        "full name",
+        "name of the accused",
+        "accused name",
+        "individual name",
+    ],
+    "alias": [
+        "alias",
+        "aliases",
+        "also known as",
+        "a.k.a",
+        "aka",
+    ],
+    "father_name": [
+        "father's name",
+        "fathers name",
+        "father name",
+        "name of father",
+        "s/o",
+        "son of",
+    ],
+    "age": [
+        "age",
+        "age years",
+        "approx age",
+    ],
+    "nationality": [
+        "nationality",
+    ],
+    "religion": [
+        "religion",
+    ],
+    "caste": [
+        "caste",
+        "community",
+    ],
+    "social_category": [
+        "sc/st/bc/others",
+        "sc st bc others",
+        "category",
+        "reservation category",
+    ],
+    "present_address": [
+        "present address",
+        "current address",
+        "residential address",
+        "address",
+    ],
+    "permanent_address": [
+        "permanent address",
+        "permanent addr",
+    ],
+    # --- 2. Unique identifiers ---
+    "mobile_number": [
+        "mobile number",
+        "mobile no",
+        "mobile",
+        "phone number",
+        "phone no",
+        "contact number",
+        "cell number",
+    ],
+    "email": [
+        "email",
+        "email ids",
+        "email id",
+        "e-mail",
+    ],
+    "social_media": [
+        "social media accounts",
+        "social media",
+        "facebook",
+        "whatsapp",
+        "instagram",
+    ],
+    "aadhaar": [
+        "aadhar number",
+        "aadhaar number",
+        "aadhar",
+        "aadhaar",
+        "uid",
+        "uidai",
+    ],
+    "ration_card": [
+        "ration card",
+        "ration card number",
+    ],
+    "voter_id": [
+        "voter id card",
+        "voter id",
+        "epic",
+        "electoral photo identity card",
+    ],
+    "passport": [
+        "passport",
+        "passport number",
+        "passport no",
+    ],
+    "pan_card": [
+        "pan card",
+        "pan",
+        "pan no",
+        "permanent account number",
+    ],
+    "electricity_connection": [
+        "electricity connection",
+        "electricity",
+        "power connection",
+    ],
+    "gas_connection": [
+        "gas connection",
+        "lpg",
+        "gas",
+    ],
+    "vehicles": [
+        "vehicles",
+        "vehicle",
+        "vehicle number",
+        "vehicle details",
+    ],
+    "driving_license": [
+        "driving license",
+        "driving licence",
+        "dl",
+        "dl number",
+    ],
+    "other_id_proofs": [
+        "other id proofs",
+        "other id",
+        "other identity",
+    ],
+    # --- 3. Physical features ---
+    "sex": ["sex", "gender"],
+    "built": ["built", "body built", "physique"],
+    "height": ["height"],
+    "eyes": ["eyes", "eye colour", "eye color"],
+    "hair": ["hair", "hair colour", "hair color"],
+    "face": ["face", "face type"],
+    "color": ["color", "colour", "complexion"],
+    "teeth": ["teeth"],
+    "nose": ["nose"],
+    "beard": ["beard"],
+    "mustaches": ["mustaches", "moustaches", "mustache", "moustache"],
+    "ear": ["ear", "ears"],
+    "identification_marks": [
+        "identification marks",
+        "identification mark",
+        "id marks",
+    ],
+    "deformities": [
+        "deformities / peculiarities",
+        "deformities",
+        "peculiarities",
+    ],
+    "language": [
+        "language / dialect",
+        "language",
+        "dialect",
+        "languages known",
+    ],
+    "burn_mark": ["burn mark", "burn marks"],
+    "leucoderma": ["leucodema", "leucoderma", "leukoderma"],
+    "mole": ["mole", "moles"],
+    "scar": ["scar", "scars"],
+    "tattoo": ["tattoo", "tattoos"],
+    # --- 4. Socio / economic ---
+    "living_status": ["living status"],
+    "marital_status": ["marital status", "married / unmarried"],
+    "education": [
+        "education details",
+        "education",
+        "educational qualification",
+        "qualification",
+    ],
+    "occupation": [
+        "occupation",
+        "occupation details",
+        "job",
+        "profession",
+    ],
+    "income_group": ["income group", "income"],
+    # --- 5. Family ---
+    "family_history": [
+        "family history",
+        "family particulars",
+        "family members",
+    ],
+    "family_stay_together": [
+        "does the family members stay together",
+        "family members stay together",
+        "stay together",
+    ],
+    "family_peculiarities": [
+        "peculiarities of family members",
+        "family peculiarities",
+    ],
+    # --- 6. Associates ---
+    "associates": [
+        "relationship with other associates",
+        "gang members",
+        "associates",
+        "friends",
+        "associates / gang members and friends",
+    ],
+    # --- 7+ offence / MO / arrest ---
+    "period_of_offence": [
+        "period of offence",
+        "period of offending",
+        "offence period",
+    ],
+    "ps_limits": [
+        "ps limits",
+        "police station limits",
+        "jurisdiction",
+    ],
+    "modus_operandi": [
+        "modus operandi",
+        "mo",
+        "m.o.",
+        "modus operandi (mo)",
+    ],
+    "crime_head": ["crime head", "crime heads"],
+    "crime_sub_head": ["crime sub-head", "crime sub head", "sub-head"],
+    "disposal_of_property": [
+        "disposal of property",
+        "property disposal",
+    ],
+    "date_of_arrest": [
+        "date of arrest",
+        "arrest date",
+        "arrested on",
+    ],
+    "place_of_arrest": [
+        "place of arrest",
+        "arrest place",
+        "arrested at",
+    ],
+    "case_number": [
+        "case number",
+        "case no",
+        "crime number",
+        "crime no",
+        "fir number",
+        "fir no",
+        "cr. no",
+        "cr no",
+    ],
+    "arrested_by": [
+        "arrested by",
+        "arresting officer",
+        "police officers who arrested",
+    ],
+    "arrest_particulars": [
+        "arrest particulars",
+        "particulars of arrest",
+    ],
+    "previous_cases": [
+        "previous cases involved",
+        "previous cases",
+        "previous history",
+        "past cases",
+    ],
+    "property_stolen": ["property stolen", "stolen property"],
+    "property_recovered": ["property recovered", "recovered property"],
+    "jail_period": ["jail period", "period in jail", "imprisonment"],
+    "nature_of_crime": [
+        "nature of crime involved",
+        "nature of crime",
+        "nature of offence",
+    ],
+    "ps_unit_state": [
+        "ps unit & state where involved in crime",
+        "ps unit and state",
+        "unit and state",
+    ],
+    "present_whereabouts": [
+        "present whereabouts",
+        "whereabouts",
+        "current whereabouts",
+    ],
+    "types_of_drugs": [
+        "types of drugs",
+        "type of drug",
+        "drugs",
+    ],
+    "consumer_details": [
+        "consumer details",
+        "consumers",
+    ],
+    "drug_peddling_mo": [
+        "time since the accused is running drug peddling",
+        "drug peddling",
+        "peddling and his/her modus operandi",
+    ],
+    "source_of_procurement": [
+        "source of procurement of drugs",
+        "source of procurement",
+        "procurement",
+    ],
+    "financial_history": [
+        "financial history and bank account transactions",
+        "financial history",
+        "bank account transactions",
+        "bank details of accused and family",
+    ],
+    "bank_details": [
+        "bank details",
+        "name of the bank",
+        "a/c no",
+        "account number",
+        "ifsc",
+    ],
+    "upi_ids": ["upi ids", "upi id", "upi"],
+    "immovable_property": [
+        "immovable property acquired with proceeds of crime",
+        "immovable property",
+    ],
+    "movable_property": [
+        "movable property acquired with proceeds of crime",
+        "movable property",
+    ],
+    "sim_details": [
+        "sim details",
+        "e. sim details",
+        "phone no",
+        "imei",
+        "sdr",
+    ],
+    "legal_support": [
+        "legal support",
+        "name of advocate",
+        "advocate",
+    ],
+    "dopams_links": [
+        "dopams links",
+        "dopams",
+    ],
+    "io_name": [
+        "investigation officer",
+        "investigating officer",
+        "i.o.",
+        "io name",
+        "name of io",
+        "officer incharge of investigation",
+        "investigating officer's name",
+        "name and rank of i.o",
+        "name and rank of io",
+        "name of the i.os",
+        "name of the io",
+        "name(s) of the i.o.(s)",
+        "names of the ios",
+        "sub inspector of police",
+    ],
+    "io_rank": [
+        "rank of io",
+        "rank",
+        "designation of io",
+        "io designation",
+    ],
+    "signature": [
+        "signature",
+    ],
     "district": [
         "district",
         "distt",
         "dist.",
-        "जिला",
         "name of district",
         "district name",
     ],
@@ -23,37 +409,25 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "ps",
         "p.s.",
         "p.s",
-        "police chowki",
         "thana",
-        "थाना",
-        "name of police station",
         "ps name",
+        "name of police station",
     ],
     "year": [
         "year",
-        "वर्ष",
+        "crime year",
         "fir year",
         "year of fir",
-        "crime year",
     ],
+    # --- Shared with charge-sheet forms (same pipeline) ---
     "fir_number": [
         "fir no",
         "fir number",
         "fir no.",
         "f.i.r. no",
         "f.i.r. number",
-        "f.i.r no",
         "first information report no",
         "fir/crime no",
-        "क्रमांक",
-    ],
-    "crime_number": [
-        "crime no",
-        "crime number",
-        "crime no.",
-        "cr. no",
-        "cr no",
-        "crime register no",
     ],
     "fir_date": [
         "fir date",
@@ -61,7 +435,6 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "fir dated",
         "date of registration",
         "registered on",
-        "दिनांक",
     ],
     "charge_sheet_number": [
         "charge sheet no",
@@ -71,19 +444,14 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "final report no",
         "fr no",
         "cs no",
-        "charge-sheet no",
     ],
     "submission_date": [
         "date of submission",
         "submitted on",
         "charge sheet date",
-        "charge sheet dt",
-        "charge sheet dated",
         "date of charge sheet",
         "date of final report",
-        "final report date",
         "forwarded on",
-        "date of charge-sheet",
     ],
     "court_name": [
         "court",
@@ -92,8 +460,6 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "before the court",
         "judicial magistrate",
         "sessions court",
-        "hon'ble court",
-        "competent court",
     ],
     "jurisdiction": [
         "jurisdiction",
@@ -142,10 +508,7 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "name of complainant",
         "name of the complainant",
         "name of complainant or informant",
-        "name of the complainant & father's name",
         "complainant's name",
-        "complaintant",
-        "शिकायतकर्ता",
     ],
     "informant_name": [
         "informant",
@@ -153,34 +516,12 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "informant's name",
         "first informant",
     ],
-    "io_name": [
-        "investigating officer",
-        "i.o.",
-        "io name",
-        "name of io",
-        "investigation officer",
-        "officer incharge of investigation",
-        "investigating officer's name",
-        "name and rank of i.o",
-        "name and rank of io",
-        "name of the i.os",
-        "name of the io",
-        "name(s) of the i.o.(s)",
-        "names of the ios",
-    ],
-    "io_rank": [
-        "rank of io",
-        "rank",
-        "designation of io",
-        "io designation",
-    ],
     "accused_name": [
         "accused",
         "name of accused",
         "accused person",
         "accused persons",
         "name of the accused",
-        "अभियुक्त",
     ],
     "witness_name": [
         "witness",
@@ -189,20 +530,15 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "list of witnesses",
         "prosecution witness",
         "pw",
-        "साक्षी",
     ],
     "seized_property": [
         "seized property",
         "property seized",
         "muddemal",
-        "mudamal",
         "exhibits",
         "articles seized",
         "list of property",
         "details of property",
-        "details of the property",
-        "details of properties",
-        "property recovered",
         "property deposited",
         "seizure",
     ],
@@ -213,7 +549,6 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
         "forensic",
         "chemical analysis",
         "fsl report",
-        "result of laboratory analysis",
     ],
     "brief_facts": [
         "brief facts",
@@ -239,9 +574,27 @@ FIELD_SYNONYMS: Dict[str, List[str]] = {
     ],
 }
 
-# Recognised form labels that have no schema field. Matching them keeps the
-# row out of a wrong canonical field; the value is preserved as unmapped.
+# Recognised form labels that have no dedicated schema field. Matching them
+# keeps the row out of a wrong canonical field; the value is preserved as printed.
 FORM_LABEL_HINTS: Dict[str, List[str]] = {
+    "middle_name": ["middle name"],
+    "last_name": ["last name", "surname"],
+    "in_jail": ["in jail"],
+    "on_bail": ["on bail"],
+    "absconding": ["absconding"],
+    "normal_life": ["normal life", "leading normal life"],
+    "rehabilitated": ["rehabilitated"],
+    "facing_trial": ["facing trial"],
+    "true_caller_name": ["true caller name"],
+    "accused_details": ["accused details"],
+    "supplier": ["supplier", "supplier details"],
+    "receivers": ["receivers details", "receiver details"],
+    "mode_of_transport": ["mode of transport"],
+    "mode_of_delivery": ["mode of delivery"],
+    "payment_mode": ["payment mode", "mode of payment"],
+    "purchase_amount": ["purchase amount", "purchase amount & mode of payment"],
+    "quantity": ["quantity"],
+    "place_of_consumption": ["place of consumption"],
     "final_report_if_not_charge_sheet": [
         "if final report",
         "if final report un-occurred",
@@ -251,8 +604,6 @@ FORM_LABEL_HINTS: Dict[str, List[str]] = {
     "complainant_informed_date": [
         "date on which the complainant was informed",
         "date on which the complainant was informed of the final result",
-        "date on which the complainant was informed about the final result",
-        "date on which the complainant was informed of the result",
     ],
     "false_report_action": [
         "final report is false",
@@ -262,15 +613,22 @@ FORM_LABEL_HINTS: Dict[str, List[str]] = {
     ],
 }
 
-# Headings that open a list of persons, matched on compact (letters-only) text.
-# Order matters: "not charge sheeted" must be tested before plain "accused".
+# Headings that open a list of persons / rows (compact, letters-only matching).
 LIST_HEADING_PATTERNS = [
+    ("family_history", r"familyhistory|familymembers"),
+    ("associates", r"associates|gangmembers|relationshipwithother"),
+    ("previous_cases", r"previouscases|previoushistory"),
+    ("types_of_drugs", r"typesofdrugs|typeofdrug"),
+    ("consumer_details", r"consumerdetails"),
+    ("source_of_procurement", r"sourceofprocurement"),
+    ("financial_history", r"financialhistory|bankdetails"),
+    ("sim_details", r"simdetails"),
     ("accused_not_charged", r"accused.*not.*charge|notcharge.*accused"),
     ("accused_charged", r"accused"),
     ("witnesses", r"witness"),
 ]
 
-# Phrases that mark the start of the investigation narrative (compact text).
+# Phrases that mark long free-text narrative blocks.
 NARRATIVE_MARKERS = [
     r"^(?:\d{1,2})?(?:the)?brieffacts",
     r"^(?:\d{1,2})?gistofthecase",
@@ -280,31 +638,48 @@ NARRATIVE_MARKERS = [
     r"^respectedsir",
     r"^thisisacaseof",
     r"^itis(?:humbly)?submitted",
+    r"^(?:\d{1,2})?timesincetheaccusedisrunningdrug",
+    r"^(?:\d{1,2})?notes",
 ]
 
 DOCUMENT_TYPE_KEYWORDS = [
-    "charge sheet",
-    "chargesheet",
-    "charge-sheet",
-    "final report",
-    "challan",
-    "police report",
-    "under section 173",
-    "section 173",
-    "bnss 193",
-    "form of charge sheet",
+    "interrogation report",
+    "interrogation",
+    "mo criminal database",
+    "cctns",
+    "individual particulars",
+    "unique identifiers",
+    "physical features",
+    "phystcal features",  # common typo in the printed form
+    "socio / economic profile",
+    "socio economic profile",
+    "family history",
+    "period of offence",
+    "modus operandi",
+    "arrest particulars",
+    "previous cases involved",
+    "dopams",
+    "ndps",
 ]
 
 SECTION_HEADER_HINTS = [
-    "particulars of the accused",
-    "particulars of accused",
-    "list of accused",
-    "list of witnesses",
-    "particulars of witnesses",
-    "property seized",
-    "acts and sections",
-    "brief facts",
-    "investigation",
-    "complainant",
-    "informant",
+    "individual particulars",
+    "unique identifiers",
+    "physical features",
+    "phystcal features",
+    "socio / economic profile",
+    "family history",
+    "relationship with other associates",
+    "period of offence",
+    "modus operandi",
+    "disposal of property",
+    "arrest particulars",
+    "previous cases involved",
+    "present whereabouts",
+    "types of drugs",
+    "consumer details",
+    "source of procurement",
+    "financial history",
+    "legal support",
+    "dopams links",
 ]

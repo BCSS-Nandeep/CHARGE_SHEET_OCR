@@ -67,9 +67,9 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=__version__,
         description=(
-            "Local-only charge-sheet PDF extraction and data mapping service. "
-            "Uploads and extracted data are processed on this host; external AI APIs "
-            "are disabled by default."
+            "Local-only interrogation report (IR) DOCX/PDF extraction service. "
+            "Detects labels and values as printed; JSON schema matches charge-sheet OCR 2.0.0. "
+            "Uploads stay on this host; external AI APIs are disabled by default."
         ),
         docs_url="/docs" if settings.api_docs_enabled else None,
         redoc_url="/redoc" if settings.api_docs_enabled else None,

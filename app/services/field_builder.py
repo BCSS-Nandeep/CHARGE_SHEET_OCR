@@ -185,7 +185,13 @@ class FieldBuilder:
             self._append(" | ".join(([serial] if serial else []) + _content_cells(cells)), it.page)
             cur.list_from_rows = True
             return
-        pairs, rest = parse_cell_pairs(label_cell)
+        # Whole-cell label ("PAN Card", "Present Address") must not be split by
+        # abbreviation prefix rules ("PAN" + "Card").
+        whole_canon, whole_score = recognise(_label_text(label_cell.split("\n", 1)[0]))
+        if whole_canon and whole_score >= 0.9:
+            pairs, rest = [], ""
+        else:
+            pairs, rest = parse_cell_pairs(label_cell)
         if pairs and not rest and all(value for _, value in pairs):
             # The label cell holds its own 'Dist. X' / 'District: X. Police Station: Y' pairs
             for i, (label, value) in enumerate(pairs):

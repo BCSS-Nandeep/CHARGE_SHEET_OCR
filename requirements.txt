@@ -1,4 +1,4 @@
-# Charge Sheet OCR Service — local-only dependencies
+# Interrogation Report (IR) OCR Service — local-only dependencies
 # No cloud AI / telemetry packages
 
 fastapi==0.115.6

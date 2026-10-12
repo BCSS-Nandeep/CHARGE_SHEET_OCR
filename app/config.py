@@ -20,13 +20,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Charge Sheet Extraction Service"
+    app_name: str = "Interrogation Report Extraction Service"
     app_env: str = "development"
     app_host: str = "127.0.0.1"
     app_port: int = 8000
     debug: bool = False
 
-    database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'charge_sheets.db'}"
+    database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'ir_reports.db'}"
 
     upload_dir: Path = BASE_DIR / "uploads"
     max_upload_size_mb: int = 25

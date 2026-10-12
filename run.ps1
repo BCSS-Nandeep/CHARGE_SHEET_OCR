@@ -1,4 +1,4 @@
-# Start the Charge Sheet Extraction Service (local bind)
+# Start the Interrogation Report Extraction Service (local bind)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 if (-not (Test-Path .\.venv\Scripts\Activate.ps1)) {

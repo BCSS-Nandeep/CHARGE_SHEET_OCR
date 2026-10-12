@@ -33,6 +33,7 @@ from app.schemas.charge_sheet import (
 from app.schemas.raw import RawDocument, RawLine, RawPage
 from app.services.docling_service import DoclingService
 from app.services.document_detector import DocumentDetector
+from app.services.docx_service import DocxService
 from app.services.field_builder import build_fields
 from app.services.form_parser import DocItem, drop_page_furniture
 from app.services.layout_service import (
@@ -62,6 +63,7 @@ class ExtractionService:
     def __init__(self, db: Optional[Session] = None):
         self.settings = get_settings()
         self.pdf = PdfService()
+        self.docx = DocxService()
         self.ocr = OcrService()
         self.structure = StructureService()
         self.docling = DoclingService()
@@ -328,6 +330,14 @@ class ExtractionService:
     @staticmethod
     def _page_items(page: PageContent, layout: Optional[PageLayout]) -> List[DocItem]:
         items: List[DocItem] = []
+        # DOCX physical-feature grids are pre-parsed into HeaderPair list
+        docx_headers = getattr(page, "_docx_header_pairs", None) or []
+        docx_ys = getattr(page, "_docx_header_ys", None) or {}
+        for hp in docx_headers:
+            y = float(docx_ys.get(hp.order, 5000.0 + hp.order))
+            items.append(
+                DocItem(page.page_number, y, f"{hp.label}: {hp.value}", header=hp)
+            )
         if layout is not None:
             for row in layout.rows:
                 items.append(DocItem(page.page_number, row.bbox[1] if row.bbox else 0.0, " ".join(row.cells), row=row))
@@ -371,18 +381,25 @@ class ExtractionService:
         self.last_raw = RawDocument()
         self._progress = progress
         audit("extraction_start")
-        self._report("Reading the PDF text layer")
         stage_results: List[StageResult] = []
         warnings: List[str] = []
 
-        pdf_result = self.pdf.extract(path)  # unreadable/encrypted PDFs raise → document FAILED
+        suffix = path.suffix.lower()
+        if suffix == ".docx":
+            self._report("Reading the Word document tables")
+            pdf_result = self.docx.extract(path)
+            stage_name = "docx_text_layout"
+        else:
+            self._report("Reading the PDF text layer")
+            pdf_result = self.pdf.extract(path)  # unreadable/encrypted PDFs raise → document FAILED
+            stage_name = "pdf_text_layout"
         warnings.extend(pdf_result.warnings)
         native_pages = sum(1 for p in pdf_result.pages if p.route == "native")
         both_pages = sum(1 for p in pdf_result.pages if p.route == "both")
         ocr_pages = sum(1 for p in pdf_result.pages if p.route == "ocr")
         stage_results.append(
             StageResult(
-                stage="pdf_text_layout",
+                stage=stage_name,
                 detail=(
                     f"{pdf_result.page_count} page(s); route native={native_pages} "
                     f"ocr={ocr_pages} both={both_pages}"
@@ -390,7 +407,30 @@ class ExtractionService:
             )
         )
 
-        layouts, page_summaries, acquire_stage = self._run_page_pipeline(path, pdf_result, warnings, started)
+        if suffix == ".docx":
+            # Native Word tables — skip OCR / hybrid stack
+            layouts = {}
+            page_summaries = [
+                PageSummary(
+                    page_number=p.page_number,
+                    route="native",
+                    route_reasons=list(p.route_reasons),
+                    text_source="native",
+                    page_status="native_ok",
+                    char_count=p.char_count,
+                    note="DOCX native tables",
+                )
+                for p in pdf_result.pages
+            ]
+            acquire_stage = StageResult(
+                stage="hybrid_page_acquire",
+                status=StageStatus.SKIPPED,
+                detail="DOCX native text/tables; OCR not required",
+            )
+        else:
+            layouts, page_summaries, acquire_stage = self._run_page_pipeline(
+                path, pdf_result, warnings, started
+            )
         stage_results.append(acquire_stage)
         self.last_raw = self._raw_document(pdf_result, page_summaries)
         self.last_page_texts = {p.page_number: p.text for p in pdf_result.pages}

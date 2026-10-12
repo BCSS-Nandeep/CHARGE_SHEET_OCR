@@ -33,14 +33,18 @@ class DocumentDetector:
         if section_hits:
             score += min(0.35, 0.08 * len(section_hits))
 
-        # Presence of FIR / PS / accused patterns
-        if re.search(r"\bfir\b|\bf\.i\.r\b", text_l):
+        # Strong IR markers
+        if re.search(r"\binterrogation\s+report\b", text_l):
+            score += 0.25
+        if re.search(r"\bcctns\b|\bmo\s+criminal\s+database\b", text_l):
+            score += 0.15
+        if re.search(r"\baadhar|\baadhaar|\bunique\s+identifiers\b", text_l):
             score += 0.1
-        if re.search(r"\baccused\b|\bwitness", text_l):
-            score += 0.1
+        if re.search(r"\baccused\b|\barrest", text_l):
+            score += 0.05
 
         score = min(score, 0.99)
-        doc_type = "charge_sheet" if score >= 0.35 else "unknown"
+        doc_type = "interrogation_report" if score >= 0.35 else "unknown"
         uncertain = score < 0.55 or doc_type == "unknown"
 
         notes = (
