@@ -371,24 +371,44 @@ function initResultsPage(documentId) {
   }
 
   /* raw_json tab: every line read from the PDF, loaded on first open */
-  function bindRawTab() {
+  function bindRawTab(hasTemplate) {
     let raw = null;
+    let template = null;
     let text = "";
     const body = document.getElementById("raw-body");
     const select = document.getElementById("raw-page");
     const msg = document.getElementById("raw-msg");
+    const viewSel = document.getElementById("raw-view");
+    const templateMode = () => hasTemplate && viewSel && viewSel.value === "template";
 
-    function show() {
-      const page = select.value;
-      const view = page ? { ...raw, pages: raw.pages.filter((p) => String(p.page) === page) } : raw;
-      text = JSON.stringify(view, null, 2);
+    function render(obj) {
+      text = JSON.stringify(obj, null, 2);
       body.classList.remove("muted");
       body.innerHTML = text.split("\n").map((ln, i) =>
         `<div class="raw-line"><span class="ln">${i + 1}</span><span class="code">${escapeHtml(ln)}</span></div>`).join("");
     }
 
+    function show() {
+      if (templateMode()) { render(template); return; }
+      const page = select.value;
+      render(page ? { ...raw, pages: raw.pages.filter((p) => String(p.page) === page) } : raw);
+    }
+
+    /* Template JSON: the standard template's sections / fields / columns with values, as on the results screen.
+       Fetched on every open so saved corrections show up. */
+    async function loadTemplate() {
+      try {
+        template = await api(`${docUrl}/template.json`);
+        show();
+      } catch (err) {
+        body.textContent = err.message;
+      }
+    }
+
     async function loadRaw() {
-      if (raw) return;
+      select.classList.toggle("hidden", templateMode());
+      if (templateMode()) return loadTemplate();
+      if (raw) { show(); return; }
       try {
         raw = await api(`${docUrl}/raw`);
         raw.pages.forEach((p) => {
@@ -416,11 +436,12 @@ function initResultsPage(documentId) {
       };
     });
     select.onchange = () => raw && show();
+    if (viewSel) viewSel.onchange = () => loadRaw();
     document.getElementById("raw-copy").onclick = async () => {
       if (!text) return;
       try {
         await navigator.clipboard.writeText(text);
-        setAlert(msg, "Raw JSON copied.", "ok");
+        setAlert(msg, templateMode() ? "Template JSON copied." : "Raw JSON copied.", "ok");
       } catch (err) {
         setAlert(msg, "Copy was blocked by the browser; use Download instead.", "error");
       }
@@ -428,11 +449,13 @@ function initResultsPage(documentId) {
     document.getElementById("raw-download").onclick = () => {
       if (!text) return;
       const name = ((raw && raw.file_name) || "document").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9._-]+/g, "_");
-      const page = select.value ? `_page${select.value}` : "";
+      const page = !templateMode() && select.value ? `_page${select.value}` : "";
       const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${name}${page}_raw.json`;
+      a.download = templateMode()
+        ? `${(((template && template.report && template.report.file_name) || "report").replace(/\.(pdf|docx)$/i, "").replace(/[^A-Za-z0-9._-]+/g, "_"))}_template.json`
+        : `${name}${page}_raw.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -471,16 +494,20 @@ function initResultsPage(documentId) {
       </div>
       <div class="tabs" role="tablist">
         <button class="tab active" role="tab" data-tab="fields" aria-selected="true">Fields</button>
-        <button class="tab" role="tab" data-tab="raw" aria-selected="false">raw_json</button>
+        <button class="tab" role="tab" data-tab="raw" aria-selected="false">${r.standard_ir ? "JSON" : "raw_json"}</button>
       </div>
       <div id="tab-raw" class="hidden">
         <div class="card section">
           <div class="row">
+            ${r.standard_ir ? `<label class="muted small" for="raw-view">View</label>
+            <select id="raw-view"><option value="template">Template JSON (sections, fields, values)</option><option value="raw">Raw lines as read</option></select>` : ""}
             <label class="muted small" for="raw-page">Page</label>
             <select id="raw-page"><option value="">All pages</option></select>
             <button class="btn secondary" id="raw-copy">Copy</button>
             <button class="btn secondary" id="raw-download">Download JSON</button>
-            <span class="muted small">Every text line read from the PDF, exactly as read, top to bottom.</span>
+            <span class="muted small">${r.standard_ir
+              ? "Template JSON: the same sections, labels and values as the Fields tab. Raw lines: everything read, as read."
+              : "Every text line read from the PDF, exactly as read, top to bottom."}</span>
           </div>
           <div id="raw-msg" class="hidden"></div>
           <div id="raw-body" class="raw-json muted">Loading…</div>
@@ -511,7 +538,7 @@ function initResultsPage(documentId) {
       </div>
       </div>`;
 
-    bindRawTab();
+    bindRawTab(!!r.standard_ir);
 
     document.getElementById("field-filter").addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();
