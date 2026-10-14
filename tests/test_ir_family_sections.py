@@ -161,3 +161,101 @@ def test_a_values_only_row_is_read_as_written_and_unlisted_values_are_not_forced
     assert sec["color"]["selected"] is None and sec["color"]["other"] == "Normal"
     codes = {(f["code"], f["path"].split(".")[-1]) for f in std["review_flags"] if f["section"] == spec.key}
     assert ("choice_not_in_source", "height") in codes and ("written_value_not_an_option", "color") in codes
+
+
+# ---- the model filling blank printed rows --------------------------------------------------------------
+
+def test_blank_printed_family_rows_stay_blank_even_if_the_model_fills_them():
+    filled_blank = {"name": "-do-", "address": "-do-", "phone": "-do-",
+                    "criminal_background": {"selected": "No", "evidence": "bold"},
+                    "alive_dead": {"selected": "Alive", "evidence": "bold"}}
+    rows, std = member_rows([
+        {"relation": "Father’s Sister", "name": "Priya w/o Ranga", "address": "Nijampet", "phone": "-do-",
+         "criminal_background": {"selected": "No"}, "alive_dead": {"selected": "Alive"}},
+        {"relation": "Father’s Sister", **filled_blank},  # the second printed row is blank
+        {"relation": "Drug Supplier", **filled_blank},  # printed, blank
+        {"relation": "Children", **filled_blank},  # no such row is printed at all
+    ])
+    by = {r["relation"]: r for r in rows[: len(FAMILY_RELATIONS)]}
+    sister = by["Father's Sister"]
+    assert sister["name"] == "Priya w/o Ranga" and sister["address"] == "Nijampet"
+    assert sister["phone"] is None  # "-do-" is not in Priya's printed row
+    assert sister["criminal_background"]["selected"] == "No"  # bold "No" in her own row
+    assert sister["alive_dead"]["selected"] == "Alive"
+    assert not [r for r in rows[len(FAMILY_RELATIONS):]]  # the blank second row and "Drug Supplier" add nothing
+    children = by["Children"]
+    assert children["name"] is None and children["criminal_background"]["selected"] is None
+    assert children["alive_dead"]["selected"] is None
+    assert any(f["code"] == "ungrounded_rows_removed" and "Children" in f["detail"] for f in std["review_flags"])
+
+
+def test_choices_in_a_family_row_are_read_from_that_rows_own_marks():
+    rows, std = member_rows([{"relation": "Father", "name": "Rao Kumar, Age 54, occ: Acting",
+                              "criminal_background": {"selected": "Yes"}, "alive_dead": {"selected": "Dead"}}])
+    father = rows[0]
+    assert father["criminal_background"]["selected"] is None and father["alive_dead"]["selected"] is None
+    codes = {f["code"] for f in std["review_flags"] if f["path"].startswith("s05_family_history.members.0.")}
+    assert "unsupported_selection" in codes  # the report's bold marks are No / Alive, so Yes / Dead are not assumed
+
+
+# ---- header detection, headings, dashes, categories ----------------------------------------------------
+
+def test_the_word_yes_is_not_a_column_header_for_eyes():
+    from app.ir_standard.evidence import match_field
+
+    s3 = SECTION_BY_NUMBER[3]
+    assert match_field("yes", s3.fields) is None and match_field("**yes**", s3.fields) is None
+    assert match_field("Eyes", s3.fields).key == "eyes" and match_field("Eyes (4)", s3.fields).key == "eyes"
+    md = ("3.PHYSICAL FEATURES\n\n| **Nose**<br>**(9)** | **Beard**<br>**(10)** | **Moustache**<br>**(11)** | **Ear**<br>**(12)** |  |\n"
+          "| --- | --- | --- | --- | --- |\n|  | **Beard** | **yes** | **Normal** |  |\n"
+          "| **Normal** | Full beard | ☐ Turnee up |  |  |\n| Hooked | ☐ Short | ☐ Chipped |  |  |\n")
+    index = EvidenceIndex(s3, md, "docx_native")
+    nose = {m.label: m for m in index.marks_for(next(f for f in s3.fields if f.key == "nose"))}
+    assert nose["Normal"].bold and "Hooked" in nose  # the nose options stay in the Nose column
+    eyes = next(f for f in s3.fields if f.key == "eyes")
+    assert not index.marks_for(eyes)  # nothing from the moustache column leaks into Eyes
+    assert index.text_for(next(f for f in s3.fields if f.key == "ear")) == "Normal"  # the Ear column's own value
+
+
+def test_the_sections_own_heading_line_is_not_read_as_a_field_label():
+    s7 = SECTION_BY_NUMBER[7]
+    md = "**7.PERIOD OF OFFENCE:**\n\n| ☐ Dark Fort night | ☐ **Moon light** | ☐ Strangers’ night | ☐ Others (specify) |\n| --- | --- | --- | --- |"
+    index = EvidenceIndex(s7, md, "docx_native")
+    assert index.written_answer(s7.fields[0]) is None  # it is an option list
+    std = build_standard({s7.key: {"period": {"selected": "Moon light", "evidence": "bold"}}}, indexes={s7.key: index})
+    period = std["sections"][s7.key]["period"]
+    assert period["selected"] == ["Moon light"] and period["verification"]["chosen"][0]["via"] == "bold"
+    assert not [f for f in std["review_flags"] if f["section"] == s7.key]
+
+
+def test_a_dash_returned_for_a_field_that_has_text_is_flagged():
+    s3 = SECTION_BY_NUMBER[3]
+    md = ("3.PHYSICAL FEATURES\n\n| **Burn Marks**<br>**(16)** | **Leucodema**<br>**(17)** | **Mole**<br>**(18)** | **Scar**<br>**(19)** | **Tattoo**<br>**(20)** |\n"
+          "| --- | --- | --- | --- | --- |\n| -- | - | - |  | Left arm (owl mark) |\n")
+    index = EvidenceIndex(s3, md, "docx_native")
+    std = build_standard({s3.key: {"tattoo": "-", "burn_marks": "--"}}, indexes={s3.key: index})
+    flagged = {f["path"].split(".")[-1]: f["code"] for f in std["review_flags"] if f["section"] == s3.key}
+    assert std["sections"][s3.key]["tattoo"] == "Left arm (owl mark)"  # the report's own cell replaces the dash
+    assert flagged.get("tattoo") == "filled_from_report_text"
+    assert "burn_marks" not in flagged and std["sections"][s3.key]["burn_marks"] == "--"  # a dash for a dash is fine
+
+
+def test_oc_is_a_category_option():
+    from app.ir_standard.matching import snap_option
+
+    s1 = SECTION_BY_NUMBER[1]
+    cat = next(f for f in s1.fields if f.key == "category")
+    assert snap_option("OC", cat.options) == "OC"
+
+
+def test_label_value_rows_inside_a_table_with_a_header_row_are_read():
+    s1 = SECTION_BY_NUMBER[1]
+    md = ("1.INDIVIDUAL PARTICULARS\n\n| Sl<br>No. | Particulars | First name | Middle name | Last name |\n| --- | --- | --- | --- | --- |\n"
+          "|  | Name | Asha |  | Rao |\n|  | Father’s name | Ravi Rao |  |  |\n|  | SC/ST/BC/Others | OC |  |  |\n")
+    index = EvidenceIndex(s1, md, "docx_native")
+    std = build_standard({s1.key: {"name_first": "Asha", "name_last": "Rao", "father_name": "Ravi Rao",
+                                   "category": {"selected": "OC", "evidence": "written"}}}, indexes={s1.key: index})
+    sec = std["sections"][s1.key]
+    assert sec["category"]["selected"] == "OC" and sec["category"]["verification"]["status"] == "written"
+    assert sec["father_name"] == "Ravi Rao" and sec["name_first"] == "Asha" and sec["name_last"] == "Rao"
+    assert not [f for f in std["review_flags"] if f["section"] == s1.key and f["code"] != "missing_required"]

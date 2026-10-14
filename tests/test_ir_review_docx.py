@@ -60,7 +60,7 @@ def test_flagged_fields_are_marked_needs_review_with_the_reason(flagged_standard
     text = docx_text(render_docx(flagged_standard))
     assert text.count(NEEDS_REVIEW) >= 6
     assert f"{NEEDS_REVIEW}: the option returned is not marked in the report (left empty)" in text  # height / hair / beard
-    assert f"{NEEDS_REVIEW}: text differs from what the report prints for this field" in text  # deformities
+    assert f"{NEEDS_REVIEW}: the report's own text was used instead of the model's value" in text  # deformities
     assert "the report marks several options differently" in text  # color
     assert f"{NEEDS_REVIEW}: section not found in the uploaded report" in text  # section 28
 

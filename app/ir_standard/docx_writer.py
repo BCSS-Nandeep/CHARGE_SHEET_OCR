@@ -31,6 +31,8 @@ NEEDS_REVIEW = "NEEDS REVIEW"
 REASONS = {
     "unsupported_selection": "the option returned is not marked in the report (left empty)",
     "ungrounded_value_removed": "the value returned is not in the report (left empty)",
+    "filled_from_report_text": "the report's own text was used instead of the model's value",
+    "label_echo_removed": "the model returned the field's label as its value (left empty)",
     "ungrounded_rows_removed": "table rows returned are not in the report (left out)",
     "choice_not_in_source": "the report's own text differs from the option returned (report text used)",
     "written_value_not_an_option": "the report writes this as text, not as a template option (kept as written)",

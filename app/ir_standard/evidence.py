@@ -181,12 +181,71 @@ def match_field(text: str, fields: Tuple[FieldSpec, ...]) -> Optional[FieldSpec]
         label = _norm(f.label)
         if core == label:
             return f
+        # "Father’s name" / "Fathers name" name the field "Father"
+        if core.endswith("name") and len(core) > 6 and core[:-4].rstrip("s") == label:
+            return f
         if len(core) < 5:  # fuzzy matching on very short words is how the word "yes" became the column "Eyes"
             continue
         r = difflib.SequenceMatcher(None, core, label).ratio()
         if r >= _HEADER_MATCH and (best is None or r > best[0]):
             best = (r, f)
     return best[1] if best else None
+
+
+def _word_tokens(text: str) -> List[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+_PLACEHOLDER = re.compile(r"<[^<>]*(?:text|null|or|one of|any of)[^<>]*>", re.IGNORECASE)
+
+
+def _grounded(value: object, have: set) -> bool:
+    """Every word / number of ``value`` is in ``have`` (a scan's one-letter misreading of a long word is allowed)."""
+    text = "" if value is None else str(value)
+    if _PLACEHOLDER.search(text):
+        return False
+    for t in _word_tokens(text):
+        if t in have:
+            continue
+        if len(t) >= 5 and difflib.get_close_matches(t, have, n=1, cutoff=0.86):
+            continue
+        return False
+    return True
+
+
+def _relation_key(text: str) -> str:
+    k = re.sub(r"[^a-z0-9]+", "", str(text).lower())
+    return k[:-1] if k.endswith("s") and len(k) > 3 else k
+
+
+class RowEvidence:
+    """The evidence of ONE printed table row, with the same interface the validator uses on a section index."""
+
+    def __init__(self, parent: "EvidenceIndex", cells: List[str]):
+        self.source = parent.source
+        self._cells = cells
+        self._tokens = {t for c in cells for t in _word_tokens(clean_cell(c))}
+
+    def is_grounded(self, value: object) -> bool:
+        return _grounded(value, self._tokens)
+
+    def marks_for(self, f: FieldSpec) -> Optional[List[Mark]]:
+        marks = [
+            parse_mark(line, f"row.c{ci}.o{oi}")
+            for ci, cell in enumerate(self._cells)
+            for oi, line in enumerate(cell_lines(cell))
+        ]
+        mine = [m for m in marks if snap_option(m.label, f.options)]
+        return mine or None
+
+    def written_answer(self, f: FieldSpec) -> Optional[str]:
+        return None
+
+    def text_for(self, f: FieldSpec) -> Optional[str]:
+        return None
+
+    def has_content(self) -> bool:
+        return any(not is_blank(clean_cell(c)) and not re.fullmatch(r"[\W_]*", clean_cell(c)) for c in self._cells)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +266,7 @@ class EvidenceIndex:
         self._loose: List[Mark] = []
         self._body: List[str] = []  # text the report really contains (table header rows excluded)
         self._body_tokens: Optional[set] = None
+        self._rows: List[List[List[str]]] = []  # every table of the section, row by row (for row_evidence)
         self.restructured = self._build(chunk)
 
     # -- public ---------------------------------------------------------
@@ -218,6 +278,14 @@ class EvidenceIndex:
         """What the report prints in the field's own column / row (None when it could not be located)."""
         parts = self._texts.get(f.key)
         return " ".join(parts) if parts is not None else None
+
+    def single_text(self, f: FieldSpec) -> Optional[str]:
+        """The one clean value the report prints for a text field (a single cell / line in its own row or
+        column), or None when the report has several candidates or none."""
+        parts = self._texts.get(f.key)
+        if parts is None or len(parts) != 1:
+            return None
+        return parts[0].strip() or None
 
     def marks_for(self, f: FieldSpec) -> Optional[List[Mark]]:
         """Every option printed for this field, with its evidence; None when the source could not be located."""
@@ -238,7 +306,7 @@ class EvidenceIndex:
 
     @staticmethod
     def _tokens(text: str) -> List[str]:
-        return re.findall(r"[a-z0-9]+", text.lower())
+        return _word_tokens(text)
 
     def is_grounded(self, value: object) -> bool:
         """True when every word / number of ``value`` appears in the section's own text.
@@ -246,22 +314,27 @@ class EvidenceIndex:
         Header rows of tables do not count (a column title is not data), so "Member 1" is not grounded by
         a column called "Member name". Placeholder text such as ``<text or null>`` never is.
         """
-        text = "" if value is None else str(value)
-        if re.search(r"<[^<>]*(?:text|null|or|one of|any of)[^<>]*>", text, re.IGNORECASE):
-            return False
-        want = self._tokens(text)
-        if not want:
-            return True
         if self._body_tokens is None:
-            self._body_tokens = {t for line in self._body for t in self._tokens(line)}
-        have = self._body_tokens
-        for t in want:
-            if t in have:
-                continue
-            if len(t) >= 5 and difflib.get_close_matches(t, have, n=1, cutoff=0.86):  # a scan's misreading
-                continue
-            return False
-        return True
+            self._body_tokens = {t for line in self._body for t in _word_tokens(line)}
+        return _grounded(value, self._body_tokens)
+
+    def row_evidence(self, label: str, occurrence: int = 0) -> Optional["RowEvidence"]:
+        """Evidence limited to the printed row named ``label`` (its ``occurrence``-th appearance), or None.
+
+        Used for fixed-row tables such as the family table, where each relation's row must be read from
+        its own printed row: a blank printed row can then not be filled from a neighbouring one.
+        """
+        want = _relation_key(label)
+        seen = 0
+        for rows in self._rows:
+            for row in rows:
+                for ci, cell in enumerate(row[:3]):
+                    if _relation_key(clean_cell(cell)) == want and want:
+                        if seen == occurrence:
+                            return RowEvidence(self, [c for j, c in enumerate(row) if j != ci])
+                        seen += 1
+                        break
+        return None
 
     def written_answer(self, f: FieldSpec) -> Optional[str]:
         """The text the report writes for a choice field when it is NOT an option list.
@@ -341,6 +414,23 @@ class EvidenceIndex:
                 continue
             if current is not None:
                 cbi, chf, hrow = current
+                # "SC/ST/BC/Others | OC" inside a table whose header names other columns: a row that starts with a
+                # field's label (in a column no field owns) is that field's label -> value row
+                lab = next((ci for ci, c in enumerate(row[:3])
+                            if chf.get(ci) is None and match_field(c, self.fields) is not None), None)
+                if lab is not None:
+                    f = match_field(row[lab], self.fields)
+                    lines: List[str] = []
+                    for cj, cell in enumerate(row):
+                        if cj <= lab:  # the label itself and any serial number before it ("2.") are not values
+                            continue
+                        for oi, line in enumerate(merge_wrapped(cell_lines(cell), f)):
+                            self._add(f, line, f"t{ti}.r{ri}.c{cj}.o{oi}")
+                            lines.append(line)
+                    blocks.append(("ROW", clean_cell(row[lab]) + f" [t{ti}.r{ri}]", lines))
+                    if f.kind in (SINGLE, MULTI):
+                        choice_hits += 1
+                    continue
                 for ci, cell in enumerate(row):
                     if (cbi, ci) not in col_lines:
                         for oi, line in enumerate(cell_lines(cell)):
@@ -396,6 +486,7 @@ class EvidenceIndex:
 
     def _note_body(self, rows: List[List[str]]) -> None:
         """Remember a table's cell text as real content; a first row of column titles is left out."""
+        self._rows.append(rows)
         data = rows
         if rows:
             filled = [c for c in rows[0] if clean_cell(c) and not is_blank(clean_cell(c))]

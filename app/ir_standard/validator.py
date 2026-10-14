@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.ir_standard.evidence import EvidenceIndex, Mark
+from app.ir_standard.evidence import EvidenceIndex, Mark, _relation_key
 from app.ir_standard.matching import (  # noqa: F401 (re-exported)
     _norm,
     _strip_yes,
@@ -187,6 +187,17 @@ def _verify_choice(
     }
 
 
+def _text_matches(value: Optional[str], ctx: str) -> bool:
+    """The model's text is (a form of) what the report prints. A dash / "N/A" normalises to nothing, so
+    those are compared as blank-or-not instead of matching anything."""
+    if value is None:
+        return False
+    nv, nc = _norm(value), _norm(ctx)
+    if not nv or not nc:
+        return is_blank(value) == is_blank(ctx)
+    return nv in nc or nc in nv or difflib.SequenceMatcher(None, nv, nc).ratio() >= 0.8
+
+
 def _verify_text(spec: FieldSpec, value: Optional[str], index: EvidenceIndex,
                  flags: List[dict], section: str, path: str) -> None:
     """A text value must come from the field's own column / row (a value from a neighbour is flagged)."""
@@ -197,12 +208,7 @@ def _verify_text(spec: FieldSpec, value: Optional[str], index: EvidenceIndex,
         if not is_blank(ctx):
             _flag(flags, section, path, "missed_value", f"{spec.label}: the report has {ctx!r} but nothing was returned")
         return
-    nv, nc = _norm(value), _norm(ctx)
-    if not nv or not nc:
-        # a dash / "N/A" normalises to nothing and would "match" any text: compare the two as blank-or-not
-        if is_blank(value) == is_blank(ctx):
-            return
-    elif nv in nc or nc in nv or difflib.SequenceMatcher(None, nv, nc).ratio() >= 0.8:
+    if _text_matches(value, ctx):
         return
     _flag(flags, section, path, "text_not_in_source",
           f"{spec.label}: {value!r} does not match what the report prints for this field ({ctx!r})")
@@ -316,12 +322,27 @@ def _field(spec: FieldSpec, raw: Any, flags: List[dict], section: str, path: str
            index: Optional[EvidenceIndex] = None, ground_only: bool = False) -> Any:
     if spec.kind == "text":
         value = _text(raw)
+        if index is not None and value is not None and _norm(value) == _norm(spec.label):
+            # the model copied the field's own label ("Mobile number") instead of a value
+            _flag(flags, section, path, "label_echo_removed",
+                  f"{spec.label}: the model returned the field's label as its value; left empty")
+            value = None
         if index is not None and value is not None and not index.is_grounded(value):
             # not found in the report: leave the field empty rather than keep an invented value
             _flag(flags, section, path, "ungrounded_value_removed",
                   f"{spec.label}: {value[:80]!r} is not in the report; left empty")
             value = None
         if index is not None and not ground_only:
+            printed = index.single_text(spec)
+            wrong_or_missing = printed and not _text_matches(value, printed)
+            # a printed "Nil" / "--" is only copied over a real (wrong) value, never into an empty field
+            if wrong_or_missing and (not is_blank(printed) or (value is not None and not is_blank(value))):
+                # The report prints exactly one value for this field, and the model's is different (often the row
+                # label itself, or a neighbouring column). Use what the report prints and say so; the flag stays.
+                why = f"the model returned {value!r}" if value else "the model returned nothing"
+                _flag(flags, section, path, "filled_from_report_text",
+                      f"{spec.label}: the report prints {printed!r} ({why}); the report's text was used")
+                return printed
             _verify_text(spec, value, index, flags, section, path)
         return value
     return _choice(spec, raw, flags, section, path, None if ground_only else index)
@@ -334,15 +355,21 @@ def _empty_field(spec: FieldSpec) -> Any:
 
 
 def _row(table: TableSpec, raw: Any, flags: List[dict], section: str, path: str,
-         index: Optional[EvidenceIndex] = None) -> dict:
+         index: Optional[EvidenceIndex] = None, row_mode: bool = False) -> dict:
+    """One table row. ``index`` is the section's evidence; with ``row_mode`` it is a RowEvidence (the one printed
+    row), so text is checked against that row and choice cells against that row's own marks."""
     raw = raw if isinstance(raw, dict) else {}
     # accept either keys or printed labels from the model
     lookup = {_norm(k): v for k, v in raw.items()}
     row: Dict[str, Any] = {}
     for col in table.columns:
+        if row_mode and col is table.columns[0]:
+            row[col.key] = None  # the row's own label: set by the caller from the printed row
+            continue
         value = raw.get(col.key, lookup.get(_norm(col.key), lookup.get(_norm(col.label))))
-        # table cells are only checked for being in the report (choice cells are not verified yet)
-        row[col.key] = _field(col, value, flags, section, f"{path}.{col.key}", index, ground_only=True)
+        # outside row mode table cells are only checked for being in the report (choice cells are not verified)
+        row[col.key] = _field(col, value, flags, section, f"{path}.{col.key}", index,
+                              ground_only=not (row_mode and col.kind != "text"))
     return row
 
 
@@ -376,15 +403,36 @@ def _table(table: TableSpec, raw: Any, flags: List[dict], section: str,
             elif label_text:
                 extras.append((canon or label_text, r))
         out: List[dict] = []
+        seen: Dict[str, int] = {}  # how many printed rows of each relation have been used (a relation may repeat)
+
+        def printed_row(label: str):
+            """Evidence of the printed row of this relation, or None (no index, or the report has no such row)."""
+            if index is None:
+                return None
+            k = _relation_key(label)
+            n = seen.get(k, 0)
+            seen[k] = n + 1
+            return index.row_evidence(label, n)
+
         for i, label in enumerate(table.fixed_rows):
-            row = _row(table, by_label.get(label, {}), flags, section, f"{section}.{table.key}.{i}", index)
+            raw_row = by_label.get(label, {})
+            ev = printed_row(label)
+            if index is not None and ev is None:
+                # the report has no printed row for this relation: whatever the model returned for it is not from the report
+                if _text_has_data(raw_row, first):
+                    _flag(flags, section, f"{section}.{table.key}.{i}", "ungrounded_rows_removed",
+                          f"{table.title}: the report has no '{label}' row; the data returned for it was left out")
+                raw_row = {}
+            row = _row(table, raw_row, flags, section, f"{section}.{table.key}.{i}", ev or index, row_mode=ev is not None)
             row[first] = label
             out.append(row)
         for label_text, r in extras[: table.max_rows]:
-            if index is not None and not index.is_grounded(label_text):
-                continue
+            ev = printed_row(label_text)
+            if index is not None and ev is None:
+                continue  # a relation the report does not print: not added
             row_flags: List[dict] = []
-            row = _row(table, r, row_flags, section, f"{section}.{table.key}.{len(out)}", index)
+            row = _row(table, r, row_flags, section, f"{section}.{table.key}.{len(out)}", ev or index,
+                       row_mode=ev is not None)
             row[first] = label_text  # kept as printed: no relation is assumed for it
             if _row_empty(table, row, skip=(first,)):
                 continue
@@ -407,6 +455,21 @@ def _table(table: TableSpec, raw: Any, flags: List[dict], section: str,
               f"{table.title}: {removed} row(s) returned by the model contain nothing from the report and were left out")
     # a table with no data stays in the template as one blank row (every column present, all empty)
     return out or [blank_row(table)]
+
+
+def _text_has_data(raw_row: Any, skip: str) -> bool:
+    """True when a model row carries any value other than its relation label."""
+    if not isinstance(raw_row, dict):
+        return False
+    for k, v in raw_row.items():
+        if k == skip or v is None:
+            continue
+        if isinstance(v, dict):
+            if v.get("selected") or v.get("other"):
+                return True
+        elif str(v).strip() and not is_blank(v):
+            return True
+    return False
 
 
 def blank_row(table: TableSpec) -> dict:

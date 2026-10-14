@@ -87,26 +87,28 @@ def test_metrics_match_a_hand_count_when_ground_truth_is_verified(vlm, docx, tmp
     res = ev.compare(out / "t", GT, "", "docx")
     assert res["status"] == "MEASURED"
     m = res["metrics"]
-    assert (m["field_accuracy"]["num"], m["field_accuracy"]["den"]) == (3, 5)  # sex, height, ear right
+    # sex, height, ear right; language: the model said "Hindi" (not in the report) but the report prints exactly
+    # "Telugu" for it, so that text was used and is right; only built is wrong
+    assert (m["field_accuracy"]["num"], m["field_accuracy"]["den"]) == (4, 5)
     assert (m["field_accuracy_by_kind"]["single"]["num"], m["field_accuracy_by_kind"]["single"]["den"]) == (2, 3)
-    assert (m["field_accuracy_by_kind"]["text"]["num"], m["field_accuracy_by_kind"]["text"]["den"]) == (1, 2)
+    assert (m["field_accuracy_by_kind"]["text"]["num"], m["field_accuracy_by_kind"]["text"]["den"]) == (2, 2)
     # sex TP, height TP; built: the unmarked "Lean" was left empty (no FP) and Stout is missed (FN)
     c = m["checkbox"]
     assert (c["tp"], c["fp"], c["fn"]) == (2, 0, 1) and c["precision"] == 1.0 and c["recall"] == round(2 / 3, 4)
-    v = m["validation"]  # both wrong fields are flagged, the three right ones are not
-    assert (v["tp"], v["fp"], v["fn"], v["tn"]) == (2, 0, 0, 3) and v["precision"] == 1.0 and v["recall"] == 1.0
+    v = m["validation"]  # built is wrong and flagged; language is right but flagged (it was filled from the report)
+    assert (v["tp"], v["fp"], v["fn"], v["tn"]) == (1, 1, 0, 3) and v["precision"] == 0.5 and v["recall"] == 1.0
     assert m["text_error_rates"]["cer"]["reference_chars"] == len("normal") + len("telugu")
-    assert m["text_error_rates"]["cer"]["errors"] > 0  # "Hindi" vs "Telugu"
+    assert m["text_error_rates"]["cer"]["errors"] == 0
     assert "not measured" in m["bold_detection"]
     errs = {e["path"].split(".")[-1]: e for e in res["field_errors"]}
     assert set(errs) == {"built", "language_dialect"}
     assert errs["built"]["error_category"] == "field_mapping"  # Stout is ticked in the source; the model said Lean
     assert errs["built"]["validation_outcome"] == "tp" and errs["built"]["human_review_required"] is True
     assert errs["built"]["evidence"]["marks"] and errs["built"]["flags"][0]["code"] == "unsupported_selection"
-    # "Hindi" is nowhere in the report, so it was removed (not kept): the field is empty and "Telugu" is missed
-    assert errs["language_dialect"]["predicted"] is None
-    assert errs["language_dialect"]["error_category"] == "field_mapping"
-    assert errs["language_dialect"]["flags"][0]["code"] == "ungrounded_value_removed"
+    # "Hindi" is nowhere in the report, so it was dropped and the report's own "Telugu" was used (still flagged)
+    assert errs["language_dialect"]["predicted"] == "Telugu" and errs["language_dialect"]["correct"] is True
+    assert errs["language_dialect"]["validation_outcome"] == "fp"
+    assert {x["code"] for x in errs["language_dialect"]["flags"]} == {"ungrounded_value_removed", "filled_from_report_text"}
     assert res["review_flags"]["fields_flagged"] >= 2 and res["review_flags"]["flag_rate"]["den"] > 0
 
 
@@ -132,7 +134,7 @@ def test_ambiguous_fields_are_excluded_from_accuracy_and_reported_separately(vlm
     del gt["sections"]["s03_physical_features"]["built"]
     res = ev.compare(out / "t", gt, "", "docx")
     m = res["metrics"]
-    assert (m["field_accuracy"]["num"], m["field_accuracy"]["den"]) == (3, 4)  # built left out of the denominator
+    assert (m["field_accuracy"]["num"], m["field_accuracy"]["den"]) == (4, 4)  # built left out of the denominator
     # the model's unmarked "Lean" was left empty, and an empty answer is not an accepted reading
     assert m["ambiguous_fields"] == {"listed": 1, "model_matches_an_accepted_reading": 0}
     built = next(e for e in res["field_errors"] if e["path"].endswith("built"))
@@ -171,7 +173,7 @@ def test_markdown_report_states_denominators_and_lists_errors(vlm, docx, tmp_pat
     res = ev.compare(out / "t", GT, "", "docx")
     ev.write_comparison(out / "t", res, GT)
     text = (out / "t" / "field_errors.md").read_text(encoding="utf-8")
-    assert "field accuracy: 3/5" in text and "checkbox precision" in text and "| built |" in text
+    assert "field accuracy: 4/5" in text and "checkbox precision" in text and "| built |" in text
     for name in ("comparison.json", "field_errors.json", "ground_truth.json"):
         assert (out / "t" / name).exists()
 

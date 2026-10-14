@@ -197,9 +197,11 @@ def test_beard_trim_has_no_mark_and_short_is_only_a_written_yes():
 
 def test_deformities_taken_from_the_mole_column_is_flagged_as_not_in_its_own_column():
     sec, flags = run(WRONG)
-    assert sec["deformities"] == "A Mole on the chest"  # value kept
-    assert "text_not_in_source" in codes(flags, "deformities")
-    assert "'Nil'" in flags["s03_physical_features.deformities"][0]["detail"]
+    # the model took the Mole column's text; the Deformities column prints "Nil": the report's own cell is used, and flagged
+    assert sec["deformities"] == "Nil"
+    assert "filled_from_report_text" in codes(flags, "deformities")
+    detail = flags["s03_physical_features.deformities"][0]["detail"]
+    assert "'Nil'" in detail and "A Mole on the chest" in detail  # both shown, so the reviewer sees what changed
     _, flags_ok = run({**WRONG, "deformities": "Nil"})
     assert "deformities" not in {p.split(".")[-1] for p in flags_ok}
 
@@ -315,9 +317,33 @@ def test_nothing_marked_and_nothing_chosen_is_empty_not_flagged():
     assert "sex" not in {p.split(".")[-1] for p in flags}
 
 
-def test_empty_text_field_with_content_in_the_report_is_flagged():
-    _, flags = run({**WRONG, "identification_marks": None})
-    assert "missed_value" in codes(flags, "identification_marks")
+def test_empty_text_field_with_one_clean_value_in_the_report_is_filled_from_it_and_flagged():
+    sec, flags = run({**WRONG, "identification_marks": None})
+    assert sec["identification_marks"] == "A Mole on the front side below neck"
+    assert "filled_from_report_text" in codes(flags, "identification_marks")
+    assert "the model returned nothing" in flags["s03_physical_features.identification_marks"][0]["detail"]
+
+
+def test_a_printed_nil_is_never_copied_into_an_empty_field():
+    sec, flags = run({**WRONG, "deformities": None})  # the report prints "Nil" for Deformities
+    assert sec["deformities"] is None and not codes(flags, "deformities") - {"missed_value"}
+
+
+def test_the_row_label_returned_as_the_value_is_replaced_by_the_value_printed_beside_it():
+    s2 = SECTION_BY_NUMBER[2]
+    md = ("2.UNIQUE IDENTIFIERS\n\n| Sl<br>No. | Identification type |  |\n| --- | --- | --- |\n"
+          "| 1. | Mobile number | 8008948701 |\n| 2. | Email IDs |  |\n| 4. | Aadhar Number | 6203 6054 7497 |\n")
+    index = EvidenceIndex(s2, md, "docx_native")
+    std = build_standard({s2.key: {"mobile_number": "Mobile number", "email_ids": "Email IDs",
+                                   "aadhaar_number": "Aadhar Number"}}, indexes={s2.key: index})
+    sec = std["sections"][s2.key]
+    assert sec["mobile_number"] == "8008948701" and sec["aadhaar_number"] == "6203 6054 7497"
+    assert sec["email_ids"] is None  # the report's cell is blank: the echoed label is dropped, nothing is invented
+    codes_by = {f["path"].split(".")[-1]: f["code"] for f in std["review_flags"] if f["section"] == s2.key}
+    assert codes_by["mobile_number"] == "filled_from_report_text"
+    assert codes_by["email_ids"] == "label_echo_removed"
+    filled = next(f for f in std["review_flags"] if f["path"].endswith("aadhaar_number") and f["code"] == "filled_from_report_text")
+    assert "6203 6054 7497" in filled["detail"]
 
 
 def test_without_an_index_nothing_changes_for_existing_callers():
@@ -351,8 +377,8 @@ def test_one_option_per_line_under_a_label():
 def test_label_colon_value_lines_check_free_text_and_choices():
     md = "**3.PHYSICAL FEATURES**\nEar: Normal\nLanguage/Dialect: Telugu\nDeformities/Peculiarities: Nil\nSex: Male\n"
     sec, flags = run({"ear": "Normal", "language_dialect": "Hindi", "deformities": "Nil", "sex": "Male"}, md)
-    assert "ungrounded_value_removed" in codes(flags, "language_dialect")  # "Hindi" is not in the report
-    assert sec["language_dialect"] is None  # left empty, not kept
+    assert {"ungrounded_value_removed", "filled_from_report_text"} <= codes(flags, "language_dialect")  # "Hindi" is not in the report
+    assert sec["language_dialect"] == "Telugu"  # the report prints exactly one value for it: that is used
     assert not codes(flags, "ear") and not codes(flags, "deformities")
     # "Sex: Male" is a written answer, not an option list: taken from the report's own text
     assert sec["sex"]["selected"] == "Male" and sec["sex"]["evidence"] == "written"

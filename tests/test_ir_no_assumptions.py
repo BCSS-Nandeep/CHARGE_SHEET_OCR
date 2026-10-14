@@ -90,8 +90,10 @@ def test_text_values_that_are_not_in_the_report_are_removed_and_flagged():
 
 def test_placeholder_text_copied_from_the_template_is_never_kept():
     sec, flags = run(S3, S3_NO_GRID, {"identification_marks": "<text or null>", "scar": "<one of: Male | Female>"})
-    assert sec["identification_marks"] is None and sec["scar"] is None
-    assert "ungrounded_value_removed" in codes(flags, "identification_marks")
+    assert sec["scar"] is None  # the report has no Scar value: nothing to use
+    assert "<" not in str(sec["identification_marks"])  # the placeholder is never kept ...
+    assert sec["identification_marks"] == "A mole on the left side neck"  # ... the report's own value is used
+    assert {"ungrounded_value_removed", "filled_from_report_text"} <= codes(flags, "identification_marks")
 
 
 # ---- tables -----------------------------------------------------------------------------------

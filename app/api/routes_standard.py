@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.ir_standard.docx_writer import ReviewState, render_docx
 from app.ir_standard.paths import apply_overrides
+from app.ir_standard.template_json import build_template_json
 from app.logging_utils import audit
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.results_repository import ResultsRepository
@@ -79,6 +80,34 @@ def get_standard(document_id: str, download: bool = False, db: Session = Depends
         content=json.dumps(standard, ensure_ascii=False, indent=2),
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{_stem(doc.original_filename)}_standard.json"'},
+    )
+
+
+@router.get("/documents/{document_id}/template.json", dependencies=[Depends(require_api_key)])
+def get_template_json(document_id: str, download: bool = False, db: Session = Depends(get_db)):
+    """The report as the standard template in JSON: section headings, then fields / table columns with values.
+
+    Same sections, labels, groups and order as the results screen (built from the same field list); every
+    template field is present, blank when the report has no value. Reviewer corrections are applied.
+    """
+    doc, standard, data = _standard_for(document_id, db)
+    state = _review_state(doc, data)
+    review = {f.id: {"status": f.review_status.value, "note": f.notes} for f in data.fields}
+    report = {
+        "file_name": doc.original_filename,
+        "status": "verified_final" if state.final else "draft_needs_review",
+        "verified_by": state.verified_by,
+        "verified_at": state.verified_at,
+        "fields_needing_review": sum(1 for f in data.fields if f.review_status == ReviewStatus.NEEDS_REVIEW),
+    }
+    body = build_template_json(standard, review, report)
+    audit("template_json_viewed", document_id=document_id, download=download)
+    if not download:
+        return body
+    return Response(
+        content=json.dumps(body, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{_stem(doc.original_filename)}_template.json"'},
     )
 
 
