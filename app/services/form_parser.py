@@ -198,6 +198,59 @@ def _line_pairs(line: str) -> Tuple[List[Tuple[str, str]], str]:
             leftovers.append(" ".join(values).strip())
     return pairs, " ".join(leftovers).strip()
 
+def _inline_label_len(tokens: List[str], i: int, first: bool) -> int:
+    """Number of tokens of a label printed at ``tokens[i]`` without a colon, or 0.
+
+    The label must be a vocabulary label printed as is (near-exact match, never a person field) and
+    must have a value after it on its line; after the first label of a cell it must start with a
+    capital letter, so ordinary words inside a value ('investigation', 'court') are not labels.
+    """
+    head = tokens[i]
+    if not head[:1].isalpha() or (not first and not head[:1].isupper()):
+        return 0
+    best_k, best_score = 0, 0.0
+    for k in range(min(8, len(tokens) - i - 1), 0, -1):  # the best match wins; a longer label wins a tie
+        label, value = " ".join(tokens[i:i + k]), " ".join(tokens[i + k:])
+        if is_generic_date_label(label):
+            shaped = find_numeric_date(value)
+            score = 1.0 if shaped and shaped.start() == 0 else 0.0  # 'Dated 24-10-2024'
+        else:
+            canon, score = best_canonical_match(label)
+            if not canon or canon in PERSON_FIELDS:
+                score = 0.0
+        if score >= 0.95 and score > best_score:
+            best_k, best_score = k, score
+    return best_k
+
+
+def inline_label_pairs(text: str) -> List[Tuple[str, str]]:
+    """'District X Police Station Y Year 2024' / 'Cr. No. 498/2024 Dated 24-10-2024' - several labels
+    printed in one cell without colons, each followed by its value.
+
+    For a cell ``parse_cell_pairs`` cannot split. The cell must start with a label and hold at least
+    two; otherwise nothing is returned. The word right after a label always belongs to its value, and
+    a line that does not start with a label continues the previous value.
+    """
+    pairs: List[List[str]] = []
+    for raw_line in (text or "").split("\n"):
+        tokens = raw_line.split()
+        i, after_label = 0, False
+        while i < len(tokens):
+            k = 0 if after_label else _inline_label_len(tokens, i, first=not pairs)
+            if k:
+                pairs.append([" ".join(tokens[i:i + k]), ""])
+                i, after_label = i + k, True
+                continue
+            if not pairs:
+                return []  # the cell does not start with a label
+            sep = " " if pairs[-1][1] and i > 0 else ("\n" if pairs[-1][1] else "")
+            pairs[-1][1] += sep + tokens[i]
+            i, after_label = i + 1, False
+    if len(pairs) < 2:
+        return []
+    return [(label, value.strip().rstrip(",;")) for label, value in pairs]
+
+
 def colon_label(line: str) -> Optional[Tuple[str, str]]:
     """'Some Label : value' with a short label that reads like one (not a sentence)."""
     if ":" not in line:

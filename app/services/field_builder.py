@@ -8,7 +8,10 @@ table pairs, form rows, free lines, page after page) and:
 * everything after a label belongs to it (text beside it, lines below it,
   lines on the following pages) until the next label starts;
 * rows under a list heading ("Particulars of the witnesses") are list items
-  and stay in that heading's value;
+  and stay in that heading's value; a witness table read as free lines stays
+  in one value until the next numbered field;
+* a cell with several labels and no colons ("District X Police Station Y")
+  gives one field per label;
 * from the start of the narrative ("Brief facts of the case", "Honoured Sir,")
   the running text is one value — sentences such as "Age: 30" inside it are
   not split into fields;
@@ -30,6 +33,7 @@ from app.services.form_parser import (
     DocItem,
     colon_label,
     find_narrative_start,
+    inline_label_pairs,
     is_heading,
     parse_cell_pairs,
     recognise,
@@ -81,6 +85,12 @@ def _row_label_like(label_cell: str) -> bool:
         if (canon and score >= 0.85) or list_heading_kind(t) or is_heading(t):
             return True
     return False
+
+
+def _witness_table_lines(cur: Optional[_Open]) -> bool:
+    """The open field is a witness table read as free lines (not table rows)."""
+    return (cur is not None and cur.is_list and not cur.list_from_rows
+            and list_heading_kind(cur.label or "") == "witnesses")
 
 
 def _is_title_line(line: str) -> bool:
@@ -178,6 +188,8 @@ class FieldBuilder:
     def _form_row(self, it: DocItem) -> None:
         serial, cells = row_body(it.row)
         if not cells:
+            if serial is not None and _witness_table_lines(self._cur):
+                self._close()  # a row holding only the next field's number ends the witness table
             return
         label_cell, value_cells = cells[0], cells[1:]
         if serial is None and not value_cells and self._parenthetical(label_cell, it.page):
@@ -189,7 +201,9 @@ class FieldBuilder:
             cur.list_from_rows = True
             return
         pairs, rest = parse_cell_pairs(label_cell)
-        if pairs and not rest and all(value for _, value in pairs):
+        if not (pairs and not rest and all(value for _, value in pairs)):
+            pairs = inline_label_pairs(label_cell)  # 'District X Police Station Y Year 2024' - no colons
+        if pairs:
             # The label cell holds its own 'Dist. X' / 'District: X. Police Station: Y' pairs
             for i, (label, value) in enumerate(pairs):
                 self._open(label, value, it.page, "form_row", serial if i == 0 else None)
@@ -246,7 +260,10 @@ class FieldBuilder:
             serial, body = None, text  # a number that starts a sentence, not a form number
         cur = self._cur
         if cur is not None and cur.is_list:
-            if _row_label_like(body):
+            # A witness table read as free lines: its column texts ('Complainant', 'Panch witness',
+            # 'To confession') stay in the list; only the next numbered field ends it
+            in_witness_table = _witness_table_lines(cur) and serial is None
+            if _row_label_like(body) and not in_witness_table:
                 pair = colon_label(body)
                 self._open(pair[0] if pair else body, pair[1] if pair else "", it.page,
                            "label_colon" if pair else "heading", serial)
