@@ -195,8 +195,7 @@ function initUploadPage() {
 function initResultsPage(documentId) {
   bindApiKeyForm();
   const root = document.getElementById("results-root");
-  const viewState = { tab: null, page: 1, filter: "", onlyReview: false };  // survives re-renders after saving
-  const pageCache = new Map();  // page number → blob URL of the rendered page
+  const viewState = { tab: null };  // survives the re-render after saving
   const pollNote = document.getElementById("poll-note");
   const docUrl = `/api/v1/documents/${encodeURIComponent(documentId)}`;
 
@@ -243,6 +242,7 @@ function initResultsPage(documentId) {
         <div class="meta-item"><div class="label">Document ID</div><div class="value mono">${escapeHtml(doc.id)}</div></div>
         <div class="meta-item"><div class="label">Original file</div><div class="value"><a href="#" id="source-link">Open original</a></div></div>
       </div>`;
+    document.getElementById("doc-meta").dataset.filename = doc.original_filename || "";
     document.getElementById("source-link").addEventListener("click", async (e) => {
       e.preventDefault();
       try {
@@ -355,35 +355,22 @@ function initResultsPage(documentId) {
       </div>`).join("");
   }
 
-  /* raw_json tab: every line read from the PDF, loaded on first open */
-  function bindRawTab() {
-    let raw = null;
+  /* JSON tab: the final JSON, built by the server from the same fields as the Fields tab.
+     Keys are the labels detected in the document, values the complete final text (corrections included). */
+  function bindTabs() {
     let text = "";
-    const body = document.getElementById("raw-body");
-    const select = document.getElementById("raw-page");
-    const msg = document.getElementById("raw-msg");
+    const body = document.getElementById("json-body");
+    const msg = document.getElementById("json-msg");
 
-    function show() {
-      const page = select.value;
-      const view = page ? { ...raw, pages: raw.pages.filter((p) => String(p.page) === page) } : raw;
-      text = JSON.stringify(view, null, 2);
-      body.classList.remove("muted");
-      body.innerHTML = text.split("\n").map((ln, i) =>
-        `<div class="raw-line"><span class="ln">${i + 1}</span><span class="code">${escapeHtml(ln)}</span></div>`).join("");
-    }
-
-    async function loadRaw() {
-      if (raw) return;
+    async function loadJson() {
+      body.textContent = "Loading…";
       try {
-        raw = await api(`${docUrl}/raw`);
-        raw.pages.forEach((p) => {
-          const opt = document.createElement("option");
-          opt.value = String(p.page);
-          opt.textContent = `Page ${p.page} (${p.lines.length} lines)`;
-          select.appendChild(opt);
-        });
-        show();
+        const data = await api(`${docUrl}/json`);
+        text = JSON.stringify(data, null, 2);
+        body.textContent = text;
+        document.getElementById("json-count").textContent = `${Object.keys(data).length} key(s)`;
       } catch (err) {
+        text = "";
         body.textContent = err.message;
       }
     }
@@ -397,33 +384,31 @@ function initResultsPage(documentId) {
           b.setAttribute("aria-selected", String(b === btn));
         });
         root.querySelectorAll('[id^="tab-"]').forEach((panel) => panel.classList.toggle("hidden", panel.id !== `tab-${tab}`));
-        document.getElementById("review-card").classList.toggle("hidden", tab === "raw");
-        if (tab === "raw") loadRaw();
+        if (tab === "json") loadJson();  // always fresh: a saved correction shows up without reprocessing
       };
     });
-    select.onchange = () => raw && show();
-    document.getElementById("raw-copy").onclick = async () => {
+    document.getElementById("json-copy").onclick = async () => {
       if (!text) return;
       try {
         await navigator.clipboard.writeText(text);
-        setAlert(msg, "Raw JSON copied.", "ok");
+        setAlert(msg, "JSON copied.", "ok");
       } catch (err) {
         setAlert(msg, "Copy was blocked by the browser; use Download instead.", "error");
       }
     };
-    document.getElementById("raw-download").onclick = () => {
+    document.getElementById("json-download").onclick = () => {
       if (!text) return;
-      const name = ((raw && raw.file_name) || "document").replace(/\.pdf$/i, "").replace(/[^A-Za-z0-9._-]+/g, "_");
-      const page = select.value ? `_page${select.value}` : "";
+      const name = (document.getElementById("doc-meta").dataset.filename || "chargesheet").replace(/\.[A-Za-z0-9]+$/, "").replace(/[^A-Za-z0-9._-]+/g, "_");
       const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${name}${page}_raw.json`;
+      a.download = `${name}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     };
+    if (viewState.tab === "json") loadJson();
   }
 
   function renderResults(doc, payload) {
@@ -433,12 +418,11 @@ function initResultsPage(documentId) {
       return;
     }
     const fields = r.fields || [];
-    const structured = r.structured || null;
-    // Structured is the default view when the result has it; the reviewer's tab / page / filter survive a reload
-    const tabs = (structured ? [["structured", "Structured"]] : []).concat([["fields", "Fields"], ["raw", "raw_json"]]);
-    const firstTab = tabs.some(([key]) => key === viewState.tab) ? viewState.tab : tabs[0][0];
+    // The reviewer's tab survives the reload that follows saving a correction
+    const tabs = [["fields", "Fields"], ["json", "JSON"]];
+    const firstTab = tabs.some(([key]) => key === viewState.tab) ? viewState.tab : "fields";
     viewState.tab = firstTab;
-    const legacy =(r.extraction_warnings || []).some((w) => w.startsWith("REPROCESS_REQUIRED"));
+    const legacy = (r.extraction_warnings || []).some((w) => w.startsWith("REPROCESS_REQUIRED"));
     const banner = legacy
       ? `<div class="alert warn"><strong>Reprocess required.</strong> This result was made by an older version with a fixed field list. Click <em>Reprocess</em> to detect the fields in this PDF.</div>`
       : r.extraction_status === "partial"
@@ -455,8 +439,7 @@ function initResultsPage(documentId) {
           <div class="meta-item"><div class="label">Document type</div><div class="value">${escapeHtml(r.document_info?.document_type || "—")}</div></div>
           <div class="meta-item"><div class="label">Fields found</div><div class="value">${fields.length} (${labelled} with a label)</div></div>
           <div class="meta-item"><div class="label">OCR confidence (not accuracy)</div><div class="value">${escapeHtml(r.overall_confidence ?? "—")}</div></div>
-          <div class="meta-item"><div class="label">Structured fields</div><div class="value">${structured ? badge(structured.document_status) : '<span class="muted">not run (VLM off or older result)</span>'}</div></div>
-          <div class="meta-item"><div class="label">Schema</div><div class="value">${escapeHtml(r.schema_version)}${structured ? ` · structured ${escapeHtml(structured.schema_version)}` : ""}</div></div>
+          <div class="meta-item"><div class="label">Schema</div><div class="value">${escapeHtml(r.schema_version)}</div></div>
         </div>
         ${warningsList(r.extraction_warnings)}
         <details><summary>Pipeline stages and pages</summary>${stagesTable(r.stage_results)}${pagesTable(r.page_summaries)}</details>
@@ -464,18 +447,16 @@ function initResultsPage(documentId) {
       <div class="tabs" role="tablist">
         ${tabs.map(([key, text]) => `<button class="tab${key === firstTab ? " active" : ""}" role="tab" data-tab="${key}" aria-selected="${key === firstTab}">${text}</button>`).join("")}
       </div>
-      ${structured ? `<div id="tab-structured"${firstTab === "structured" ? "" : ' class="hidden"'}></div>` : ""}
-      <div id="tab-raw" class="hidden">
+      <div id="tab-json"${firstTab === "json" ? "" : ' class="hidden"'}>
         <div class="card section">
           <div class="row">
-            <label class="muted small" for="raw-page">Page</label>
-            <select id="raw-page"><option value="">All pages</option></select>
-            <button class="btn secondary" id="raw-copy">Copy</button>
-            <button class="btn secondary" id="raw-download">Download JSON</button>
-            <span class="muted small">Every text line read from the PDF, exactly as read, top to bottom.</span>
+            <button class="btn secondary" id="json-copy">Copy</button>
+            <button class="btn secondary" id="json-download">Download JSON</button>
+            <span class="muted small" id="json-count"></span>
+            <span class="muted small">One key per field, named as printed in this document; values are the complete final text, including saved corrections. Unsaved edits are not included.</span>
           </div>
-          <div id="raw-msg" class="hidden"></div>
-          <div id="raw-body" class="raw-json muted">Loading…</div>
+          <div id="json-msg" class="hidden"></div>
+          <pre id="json-body" class="raw-json json-view">Loading…</pre>
         </div>
       </div>
       <div id="tab-fields"${firstTab === "fields" ? "" : ' class="hidden"'}>
@@ -490,7 +471,7 @@ function initResultsPage(documentId) {
       </div>
       <div id="review-card" class="card section">
         <h3>Review</h3>
-        <p class="muted">Only fields you change (in the Structured or Fields tab) are saved as corrections; extracted values are never overwritten. Nothing is verified until a reviewer marks it so.</p>
+        <p class="muted">Only fields you change (in the Fields tab) are saved as corrections; extracted values are never overwritten. Nothing is verified until a reviewer marks it so.</p>
         <div class="row">
           <button class="btn" id="save-corrections">Save changed fields</button>
           <button class="btn secondary" id="reprocess-btn">Reprocess</button>
@@ -503,18 +484,7 @@ function initResultsPage(documentId) {
         <details id="history"><summary>Correction history</summary><div id="history-body" class="muted">Loading…</div></details>
       </div>`;
 
-    bindRawTab();
-    if (structured && window.StructuredView) {
-      window.StructuredView.render(document.getElementById("tab-structured"), {
-        structured,
-        layout: payload.structured_layout || [],
-        fields,
-        docUrl,
-        pageCount: doc.page_count,
-        state: viewState,
-        pageCache,
-      });
-    }
+    bindTabs();
 
     document.getElementById("field-filter").addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();

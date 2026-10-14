@@ -107,6 +107,7 @@ class FieldBuilder:
         self.fields: List[PdfField] = []
         self._cur: Optional[_Open] = None
         self._per_page: Dict[int, int] = {}
+        self._in_note = False  # inside a bracketed note that continues onto the next line
 
     # -- field lifecycle -------------------------------------------------
 
@@ -179,6 +180,8 @@ class FieldBuilder:
         if not cells:
             return
         label_cell, value_cells = cells[0], cells[1:]
+        if serial is None and not value_cells and self._parenthetical(label_cell, it.page):
+            return  # a bracketed note on its own table row continues the value above
         cur = self._cur
         if cur is not None and cur.is_list and not _row_label_like(label_cell):
             # A numbered entry under a list heading (one witness / accused per row)
@@ -219,10 +222,25 @@ class FieldBuilder:
             else:
                 self._append(cell, page)
 
+    def _parenthetical(self, text: str, page: int) -> bool:
+        """A note in brackets - "(Arrested the accused on 01-02-2021 and produced before the Court.)" -
+        is never a form label: it belongs to the value above it (here the accused it describes). A
+        note wrapped over several lines stays together until its closing bracket."""
+        if self._cur is None:
+            self._in_note = False
+            return False
+        if self._in_note or text.startswith("("):
+            self._append(text, page)
+            self._in_note = text.count("(") + (1 if self._in_note else 0) > text.count(")")
+            return True
+        return False
+
     def _form_line(self, it: DocItem) -> None:
         text = soften_pdf_text(it.text).strip()
         if len(re.findall(r"[A-Za-z0-9]", text)) < 2:
             return  # OCR speck ("N", "'0", a stray comma)
+        if self._parenthetical(text, it.page):
+            return
         serial, body = strip_serial(text)
         if serial is not None and not (is_heading(body) or colon_label(body)):
             serial, body = None, text  # a number that starts a sentence, not a form number

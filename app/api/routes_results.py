@@ -23,6 +23,7 @@ from app.schemas.document import DocumentStatus
 from app.schemas.raw import RawResponse
 from app.schemas.structured import PATH_PREFIX
 from app.security.auth import Principal, require_api_key, require_role
+from app.services.fields_json import fields_to_json
 from app.services.structured_export import final_structured_json
 
 router = APIRouter(prefix="/api/v1/documents", tags=["results"])
@@ -71,6 +72,31 @@ def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsRespo
         document=repo.to_meta(doc),
         results=results,
         field_corrections=corrections,
+    )
+
+
+@router.get(
+    "/{document_id}/json",
+    dependencies=[Depends(require_api_key)],
+)
+def get_final_json(document_id: str, download: bool = False, db: Session = Depends(get_db)):
+    """The final JSON shown in the JSON tab: one key per field, the label as detected in the document,
+    the value as the Fields tab shows it (saved corrections included). ``?download=true`` saves it."""
+    repo = DocumentRepository(db)
+    doc = _get_live(repo, document_id)
+    if doc.status in (DocumentStatus.UPLOADED.value, DocumentStatus.QUEUED.value, DocumentStatus.PROCESSING.value):
+        raise HTTPException(status_code=409, detail="Document is still being processed")
+    results = ResultsRepository(db).get(document_id)
+    if doc.status == DocumentStatus.FAILED.value or results is None:
+        raise HTTPException(status_code=404, detail="No results for this document")
+    body = fields_to_json(results.fields)
+    if not download:
+        return body
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(doc.original_filename).stem)[:120] or "document"
+    return Response(
+        content=json.dumps(body, indent=2, ensure_ascii=False),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.json"'},
     )
 
 

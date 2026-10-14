@@ -23,13 +23,16 @@ result over a REST API and an editable review UI.
 - The built-in label vocabulary is used only to *recognise* that a phrase is a label — labels are never
   renamed. Scanner watermarks ("Scanned with CamScanner") and header/footer lines repeated on several
   pages are left out; missing spaces in glued PDF exports are restored
-- **Structured fields** (optional local vision model, schema 1.0): fixed sections and field names for every
-  layout, per-value status / source page / source text, conflicts with all candidates kept, side-by-side page
-  preview, editable with corrections kept apart from machine values — see the section below
+- **JSON tab** (results page): the final JSON of the chargesheet, built from the same fields as the **Fields**
+  tab — one key per field, named exactly as printed in *that* document (a different template gives different
+  keys), the value the complete final text (long multi-line fields such as the accused or witnesses list, with
+  their arrest / remand notes, stay one key), saved corrections included, missing values `""`. Copy / Download
+  buttons; `GET /api/v1/documents/{id}/json` returns the same JSON. No fixed schema
+- Optional local vision model (see the section below): reads scanned pages and builds a canonical structured
+  result kept internally (`/structured` endpoint) — it has no tab of its own
 - PDF, PNG, JPEG, TIFF and DOCX uploads (originals kept unchanged)
-- **raw_json** tab in the UI and `/raw` endpoint: every line read from each page exactly as read (text layer
-  or OCR), top to bottom, with OCR confidence — nothing dropped, grouped or corrected; stored
-  locally next to the results and deleted with the document
+- Raw lines (`/raw` endpoint, no tab): every line read from each page exactly as read (text layer, OCR or vision
+  model), top to bottom — kept for debugging and audit; stored locally next to the results and deleted with the document
 - Separate statuses: extraction (`complete` / `partial` / `failed`) and review (`unreviewed`, `corrected`,
   `verified`). Results from schema 1.x load as "reprocess required"- Corrections stored separately with the extracted value they replaced, the reviewer and an audit trail;
   re-applied after reprocessing only when the source value is unchanged
@@ -82,8 +85,9 @@ never as an empty successful extraction. `GET /health` shows `ocr_available`, `o
 The as-printed field list above is unchanged. With `VLM_ENABLED=true` the service also builds a **structured**
 result (`results.structured`, schema `1.0`): the same sections and field names for every document, whatever
 its layout — case details, complainant, informant, acts and sections, investigating officers, accused,
-witnesses, property — each value with its status, source page and source text. The UI shows it in a
-**Structured** tab (the default), with the page image beside the fields.
+witnesses, property — each value with its status, source page and source text. It is stored with the results
+and served by `/api/v1/documents/{id}/structured`; the results page does not show it (its tabs are **Fields** and
+**JSON**, which are built from the as-printed fields).
 
 ### Setup
 
@@ -121,7 +125,7 @@ These timings are from one machine and a small sample, not a benchmark.
 
 1. **Text.** Digital pages use the PDF text layer (laid out in visual rows, cells joined with `|`). Scanned or
    garbled pages go to the model as an image (or to PaddleOCR, see `VLM_TRANSCRIBE_ENGINE`); the model's
-   output (text, HTML tables) is kept as read in `raw_json` (`source: "vlm"`) and also feeds the as-printed
+   output (text, HTML tables) is kept as read in the raw lines (`/raw`, `source: "vlm"`) and also feeds the as-printed
    field builder. PaddleOCR is never run on a page the model already read.
 2. **Mapping.** Every readable page is sent, one request each, with a JSON-schema-constrained prompt; the
    model returns **values only** (copied as printed, omitted when the page does not state them).
@@ -189,6 +193,7 @@ curl.exe -s -H "X-API-Key: $K" http://127.0.0.1:8000/api/v1/documents/<id>/resul
 | GET | `/api/v1/documents/{id}` | viewer | Metadata / processing status |
 | GET | `/api/v1/documents/{id}/results` | viewer | Field list (labels and values as printed). `422` with diagnostics (stages, pages, warnings) when extraction failed; `results: null` while processing |
 | GET | `/api/v1/documents/{id}/raw` | viewer | Raw JSON: every text line read from the PDF, page by page, as read (text, text layer or OCR, OCR confidence). `?download=true` returns it as `<name>_raw.json`; `404` for documents processed before raw capture (reprocess) |
+| GET | `/api/v1/documents/{id}/json` | viewer | **The final JSON shown in the JSON tab**: one key per field (label as printed in the document, repeats get ` (2)`, text before any label is `(text before any label)`), value = complete final text (saved correction, else extracted value), `""` when empty. `?download=true` saves `<name>.json` |
 | GET | `/api/v1/documents/{id}/structured` | viewer | **The one final structured JSON**: fixed sections / field names, final value (human correction else machine value) + machine value, status, source page / text, review flags, validation. `?download=true` saves it as `<name>_structured.json`; `404` when the VLM is not enabled or the extraction failed |
 | GET | `/api/v1/documents/{id}/source` | viewer | The original upload, byte for byte |
 | GET | `/api/v1/documents/{id}/pages/{n}/image?width=` | viewer | PNG of page *n* (from the derived PDF for an image / DOCX) — the side-by-side preview |
@@ -213,7 +218,7 @@ VLM pipeline (the default `pytest` run never contacts the model server — a fak
 
 ```powershell
 pytest tests\test_structured_mapping.py tests\test_vlm_client.py tests\test_vlm_pipeline.py tests\test_structured_eval.py -q
-python scripts\verify_ui.py --shots shots     # drives headless Edge/Chrome: UI vs API JSON, interactions
+python scripts\verify_ui.py --shots shots     # drives headless Edge/Chrome: Fields + JSON tabs, corrections (no model server)
 $env:RUN_VLM_TESTS="1"; pytest tests\test_vlm_live.py -q -s   # real inference (skips if the server is busy)
 python scripts\evaluate_structured.py [--private] [--max-pages N] [--wait SECONDS]   # field-level accuracy
 ```

@@ -1,21 +1,23 @@
-"""Check the review UI against the API in a real browser (headless Microsoft Edge / Chrome).
+"""Check the results page in a real browser (headless Microsoft Edge / Chrome): the Fields and JSON tabs.
 
-Seeds differently shaped documents using a *fake* model (tests/fake_vlm.py — no real server is
-contacted), serves the app on a local port, drives the browser through the DevTools protocol and
-compares what the page shows with the API JSON, then exercises the interactions: filter, jump to
-the source page, "use this" on a conflicting value, editing + saving a correction.
+Generates two differently-labelled chargesheets, serves the app locally (no model server is used: the
+VLM is switched off), drives the browser through the DevTools protocol and checks that
 
-    python scripts/verify_ui.py              # prints a PASS/FAIL line per check
-    python scripts/verify_ui.py --shots out  # also saves screenshots to the folder
+* the page has exactly two tabs, Fields (default) and JSON - no Structured tab, no raw_json tab;
+* the JSON tab shows valid, indented JSON whose keys and values equal the Fields tab's labels and values;
+* long multi-line fields (accused, witnesses) are single keys with their complete text;
+* editing and saving a field in the Fields tab changes the JSON immediately, an unsaved edit does not;
+* the existing Fields features (filter, source pages, review status, correction history, verification
+  controls) are still there.
 
-Needs Edge or Chrome (set BROWSER_EXE to use another). It tests the UI only: it says nothing about
-how accurate the real model is.
+    python scripts/verify_ui.py [--shots folder]
+
+Needs Edge or Chrome (set BROWSER_EXE to use another).
 """
 
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import os
 import shutil
@@ -33,80 +35,40 @@ sys.path.insert(0, str(ROOT))
 TMP = Path(tempfile.mkdtemp(prefix="cs_ui_"))
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{TMP / 'ui.db'}", "UPLOAD_DIR": str(TMP / "uploads"), "ENABLE_AUTH": "false",
-    "ASYNC_PROCESSING": "false", "OCR_ENABLED": "false", "VLM_ENABLED": "true", "VLM_MODEL": "fake-model",
-    "VLM_BASE_URL": "http://127.0.0.1:8081/v1", "OFFLINE_MODE": "true", "RETENTION_DAYS": "0",
+    "ASYNC_PROCESSING": "false", "OCR_ENABLED": "false", "VLM_ENABLED": "false", "OFFLINE_MODE": "true",
+    "RETENTION_DAYS": "0",
 })
 (TMP / "uploads").mkdir()
 
 import uvicorn  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from PIL import Image  # noqa: E402
 
-import app.services.extraction_service as extraction  # noqa: E402
-from tests.fake_vlm import FakeVlm, rule_model  # noqa: E402
-from tests.test_vlm_pipeline import NANONETS_S04, make_docx  # noqa: E402
-import app.api.routes_health as routes_health  # noqa: E402
+from tests.test_fields_json import TEMPLATE_A, TEMPLATE_B, make_pdf  # noqa: E402
 
-PORT = 8765
+PORT = 8766
 RESULTS: list = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    RESULTS.append(ok)
+    RESULTS.append(bool(ok))
     print(("PASS " if ok else "FAIL ") + name + (f"  [{detail}]" if detail and not ok else ""))
 
 
-# ---------------------------------------------------------------- seed documents
-
-
-def seed() -> dict:
+def seed():
     from app.main import create_app
 
     app = create_app()
-    fake = FakeVlm()
-    extraction.VlmClient = fake
-    routes_health.VlmClient = fake
     docs = {}
     with TestClient(app) as c:
-        def up(name, data, ctype):
-            r = c.post("/api/v1/documents/upload", files={"file": (name, data, ctype)})
+        for name, path in (
+            ("template_a", make_pdf(TMP / "a.pdf", TEMPLATE_A)),
+            ("template_b", make_pdf(TMP / "b.pdf", TEMPLATE_B)),
+            ("sample", ROOT / "tests" / "fixtures" / "sample_01_digital_standard.pdf"),
+        ):
+            r = c.post("/api/v1/documents/upload", files={"file": (path.name, path.read_bytes(), "application/pdf")})
             assert r.status_code == 202, r.text
-            return r.json()["document_id"]
-
-        fx = ROOT / "tests" / "fixtures"
-        docs["digital"] = up("digital.pdf", (fx / "sample_01_digital_standard.pdf").read_bytes(), "application/pdf")
-
-        fake.fail_map_pages = {2}  # partial: the accused page cannot be mapped
-        docs["partial"] = up("multipage.pdf", (fx / "sample_03_multipage.pdf").read_bytes(), "application/pdf")
-        fake.fail_map_pages = set()
-
-        def conflicting(body: str) -> dict:  # two pages give different years, both found in their page text
-            out = rule_model(body)
-            if "CONTINUATION" in body:
-                out.setdefault("case", {})["year"] = "99"  # "FSL-99" is printed on page 2
-            return out
-        fake.answer = conflicting
-        docs["conflict"] = up("conflict.pdf", (fx / "sample_01_digital_standard.pdf").read_bytes(), "application/pdf")
-        fake.answer = rule_model
-
-        fake.transcripts = {0: NANONETS_S04}
-        docs["scanned"] = up("scan.png", _png(), "image/png")
-        docs["docx"] = up("report.docx", make_docx(), "application/octet-stream")
-        fake.unavailable = True
-        docs["down"] = up("down.pdf", (fx / "sample_01_digital_standard.pdf").read_bytes(), "application/pdf")
-        fake.unavailable = False
-        # the API JSON each page must agree with
-        api = {k: c.get(f"/api/v1/documents/{v}/results").json() for k, v in docs.items()}
-    return docs, api, app
-
-
-def _png() -> bytes:
-    buf = io.BytesIO()
-    Image.new("RGB", (400, 300), (255, 255, 255)).save(buf, "PNG")
-    return buf.getvalue()
-
-
-# ---------------------------------------------------------------- browser (DevTools protocol)
+            docs[name] = r.json()["document_id"]
+    return docs, app
 
 
 class Browser:
@@ -119,15 +81,15 @@ class Browser:
         if not exe:
             raise SystemExit("No Edge/Chrome found (set BROWSER_EXE).")
         self.proc = subprocess.Popen(
-            [exe, "--headless=new", "--disable-gpu", "--no-first-run", "--remote-debugging-port=9333",
-             f"--user-data-dir={TMP / 'profile'}", "--window-size=1500,1500", "about:blank"],
+            [exe, "--headless=new", "--disable-gpu", "--no-first-run", "--remote-debugging-port=9334",
+             f"--user-data-dir={TMP / 'profile'}", "--window-size=1400,1400", "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         from websockets.sync.client import connect
 
         ws_url = None
         for _ in range(60):
             try:
-                tabs = json.load(urllib.request.urlopen("http://127.0.0.1:9333/json/list", timeout=2))
+                tabs = json.load(urllib.request.urlopen("http://127.0.0.1:9334/json/list", timeout=2))
                 ws_url = next(t["webSocketDebuggerUrl"] for t in tabs if t["type"] == "page")
                 break
             except Exception:
@@ -161,26 +123,27 @@ class Browser:
             raise RuntimeError(r["exceptionDetails"])
         return r["result"].get("value")
 
-    def open(self, url: str, ready: str = "!!document.querySelector('.struct-layout, .failure, .tab')", timeout: int = 30):
-        self.call("Page.navigate", url=url)
-        self.wait(ready, timeout)
-
-    def wait(self, expr: str, timeout: int = 15):
+    def wait(self, expr: str, timeout: int = 15) -> bool:
         end = time.time() + timeout
         while time.time() < end:
             try:
                 if self.js(expr):
-                    return
+                    return True
             except RuntimeError:
                 pass
             time.sleep(0.25)
-        raise TimeoutError(expr)
+        return False
+
+    def open(self, doc_id: str) -> None:
+        self.call("Page.navigate", url=f"http://127.0.0.1:{PORT}/results/{doc_id}")
+        self.wait("!!document.querySelector('.tab')", 30)
 
     def shot(self, path: Path) -> None:
         import base64
 
-        data = self.call("Page.captureScreenshot", format="png", captureBeyondViewport=False)["data"]
-        path.write_bytes(base64.b64decode(data))
+        self.call("Emulation.setDeviceMetricsOverride", width=1100, height=1500, deviceScaleFactor=1, mobile=False)
+        self.js("(document.querySelector('.tabs') || document.body).scrollIntoView()")
+        path.write_bytes(base64.b64decode(self.call("Page.captureScreenshot", format="png")["data"]))
 
     def close(self) -> None:
         try:
@@ -189,143 +152,125 @@ class Browser:
             self.proc.terminate()
 
 
-# ---------------------------------------------------------------- checks
+FIELDS_DOM = """JSON.stringify([...document.querySelectorAll('#tab-fields tr.pdf-field')].map(tr => ({
+  label: tr.querySelector('.label-cell').textContent.trim(),
+  value: tr.querySelector('.edit-input').value,
+  page: tr.children[3].textContent.trim(),
+  review: tr.children[4].textContent.trim()})))"""
+JSON_TEXT = "document.getElementById('json-body').textContent"
+UNLABELLED = "(text before any label)"
 
 
-def shown(v: dict) -> str:
-    cv = v.get("corrected_value")
-    return str(cv) if cv not in (None, "") else ("" if v.get("value") is None else str(v["value"]))
+def open_json_tab(b: Browser) -> None:
+    b.js("document.querySelector('.tab[data-tab=\"json\"]').click()")
+    b.wait("document.getElementById('json-body').textContent.trim().startsWith('{')")
 
 
-def expected_rows(structured: dict) -> dict:
-    rows = {}
-    for sec, fields in structured["single"].items():
-        for k, v in fields.items():
-            rows[f"{sec}.{k}"] = v
-    for sec, recs in structured["lists"].items():
-        for i, rec in enumerate(recs):
-            for k, v in rec["fields"].items():
-                rows[f"{sec}.{i}.{k}"] = v
-    return rows
+def dedupe_keys(labels: list) -> list:
+    seen, out = set(), []
+    for lab in labels:
+        base = UNLABELLED if lab.startswith("(text before any label)") else lab
+        key, n = base, 2
+        while key in seen:
+            key = f"{base} ({n})"
+            n += 1
+        seen.add(key)
+        out.append(key)
+    return out
 
 
-DOM_ROWS = """JSON.stringify([...document.querySelectorAll('#tab-structured tr.s-row[data-path]')].map(tr => {
-  const inp = tr.querySelector('.edit-input');
-  return {path: tr.dataset.path, fid: inp.dataset.fieldId, value: inp.value, cls: tr.className,
-          badge: (tr.querySelector('.badge[class*=st-]')||{}).textContent,
-          pages: [...tr.querySelectorAll('a.page-link')].map(a => a.dataset.page),
-          cands: tr.querySelectorAll('ul.candidates li').length};
-}))"""
-
-
-def verify_doc(b: Browser, name: str, doc_id: str, body: dict, shots: Path | None) -> None:
-    b.open(f"http://127.0.0.1:{PORT}/results/{doc_id}")
-    s = body["results"]["structured"]
-    layout = body["structured_layout"]
-    b.wait("document.querySelectorAll('#tab-structured tr.s-row').length > 0")
-    rows = {r["path"]: r for r in json.loads(b.js(DOM_ROWS))}
-    want = expected_rows(s)
-    check(f"[{name}] every structured value is a row (and no extra rows)", set(rows) == set(want),
-          f"missing={sorted(set(want) - set(rows))[:3]} extra={sorted(set(rows) - set(want))[:3]}")
-    check(f"[{name}] row values equal the JSON", all(rows[p]["value"] == shown(v) for p, v in want.items() if p in rows))
-    check(f"[{name}] status badges equal the JSON",
-          all((rows[p]["badge"] or "").replace(" ", "_") == v["status"] for p, v in want.items() if p in rows))
-    check(f"[{name}] input ids address the correction API", all(r["fid"] == "s." + r["path"] for r in rows.values()))
-    check(f"[{name}] not-found rows are marked", all(("st-not_found" in rows[p]["cls"]) == (v["status"] == "not_found")
-                                                    for p, v in want.items() if p in rows))
-    check(f"[{name}] conflicting values list every candidate",
-          all(rows[p]["cands"] == len(v["candidates"]) for p, v in want.items() if v["status"] == "conflicting" and p in rows))
-    check(f"[{name}] review marks match needs_review",
-          all(("needs-review" in rows[p]["cls"]) == bool(v["needs_review"] and not v.get("corrected_value"))
-              for p, v in want.items() if p in rows))
-    for sec in layout:
-        if sec["repeated"]:
-            n = b.js(f"document.querySelectorAll('#tab-structured details.struct-record[data-record^=\"{sec['key']}.\"]').length")
-            check(f"[{name}] {sec['key']}: {len(s['lists'][sec['key']])} record card(s)", n == len(s["lists"][sec["key"]]), f"dom={n}")
-    labels = b.js("JSON.stringify([...document.querySelectorAll('#tab-structured tr.s-row .label-cell')].map(e=>e.textContent))")
-    expected_labels = [f["label"] for sec in layout if not sec["repeated"] for f in sec["fields"]]
-    check(f"[{name}] labels come from the layout", all(l in json.loads(labels) for l in expected_labels))
-    check(f"[{name}] Structured is the default tab",
-          b.js("document.querySelector('.tab.active').dataset.tab") == "structured"
-          and b.js("document.getElementById('tab-fields').classList.contains('hidden')"))
-    check(f"[{name}] preview image loads", _wait(b, "!!document.querySelector('.doc-preview img[src]')"))
-    if shots:
-        b.shot(shots / f"{name}.png")
-
-
-def _wait(b: Browser, expr: str) -> bool:
+def verify_doc(b: Browser, name: str, doc_id: str, shots) -> None:
+    b.open(doc_id)
+    tabs = json.loads(b.js("JSON.stringify([...document.querySelectorAll('.tab')].map(t => t.textContent.trim()))"))
+    check(f"[{name}] exactly two tabs: Fields and JSON", tabs == ["Fields", "JSON"], str(tabs))
+    check(f"[{name}] no Structured / raw_json tab or panel",
+          not b.js("!!document.querySelector('[data-tab=\"structured\"], [data-tab=\"raw\"], #tab-structured, #tab-raw')"))
+    check(f"[{name}] Fields is the default tab",
+          b.js("document.querySelector('.tab.active').dataset.tab") == "fields"
+          and b.js("document.getElementById('tab-json').classList.contains('hidden')"))
+    fields = json.loads(b.js(FIELDS_DOM))
+    open_json_tab(b)
+    text = b.js(JSON_TEXT)
     try:
-        b.wait(expr, 15)
-        return True
-    except TimeoutError:
-        return False
-
-
-def interactions(b: Browser, docs: dict, api: dict, shots: Path | None) -> None:
-    # --- jump to source page
-    b.open(f"http://127.0.0.1:{PORT}/results/{docs['partial']}")
-    b.wait("document.querySelectorAll('#tab-structured tr.s-row').length > 0")
-    b.js("document.querySelector('.doc-preview select').value")
-    b.js("[...document.querySelectorAll('#tab-structured a.page-link')].find(a => a.dataset.page === '3').click()")
-    check("clicking a field's page link shows that page",
-          _wait(b, "document.querySelector('.doc-preview select').value === '3'"))
-    check("preview shows a page image", _wait(b, "document.querySelector('.doc-preview img').naturalWidth > 0"))
-
-    # --- filter
-    b.js("(()=>{const f=document.getElementById('struct-filter'); f.value='police'; f.dispatchEvent(new Event('input',{bubbles:true}));})()")
-    vis = json.loads(b.js("JSON.stringify([...document.querySelectorAll('#tab-structured tr.s-row:not(.hidden)')].map(t=>t.dataset.path))"))
-    check("filter narrows rows to matches", vis == ["case.police_station"], str(vis))
-    b.js("(()=>{const f=document.getElementById('struct-filter'); f.value=''; f.dispatchEvent(new Event('input',{bubbles:true}));})()")
-    b.js("(()=>{const c=document.getElementById('struct-only-review'); c.checked=true; c.dispatchEvent(new Event('change',{bubbles:true}));})()")
-    only = b.js("document.querySelectorAll('#tab-structured tr.s-row:not(.hidden):not(.needs-review)').length")
-    check("'only items to review' hides rows that need no review", only == 0, str(only))
-
-    # --- conflict: use a candidate, save, see it as a human correction beside the machine value
-    b.open(f"http://127.0.0.1:{PORT}/results/{docs['conflict']}")
-    b.wait("document.querySelectorAll('#tab-structured tr.s-row').length > 0")
-    n = b.js("document.querySelectorAll('tr[data-path=\"case.year\"] ul.candidates li').length")
-    check("conflicting year lists both candidates", n == 2, str(n))
-    b.js("document.querySelector('tr[data-path=\"case.year\"] button[data-use-value]').click()")
-    check("'use this' fills the value and marks the row edited",
-          b.js("document.querySelector('tr[data-path=\"case.year\"]').classList.contains('dirty')"))
-    b.js("(()=>{const i=document.querySelector('tr[data-path=\"accused.0.age\"] .edit-input'); i.value='41'; i.dispatchEvent(new Event('input',{bubbles:true}));})()")
-    b.js("document.getElementById('save-corrections').click()")
-    check("save re-renders with a human-corrected badge",
-          _wait(b, "!!document.querySelector('tr[data-path=\"case.year\"] .badge.corrected')"))
-    check("view state survives the reload (Structured tab still active)",
-          b.js("document.querySelector('.tab.active').dataset.tab") == "structured")
-    after = json.loads(b.js(DOM_ROWS))
-    row = next(r for r in after if r["path"] == "case.year")
-    check("corrected value shown, machine status kept", row["value"] != "" and row["cls"].find("st-conflicting") >= 0)
-    import urllib.request as u
-
-    res = json.load(u.urlopen(f"http://127.0.0.1:{PORT}/api/v1/documents/{docs['conflict']}/results"))
-    v = res["results"]["structured"]["single"]["case"]["year"]
-    check("API keeps the candidates and the correction apart",
-          v["value"] is None and v["corrected_value"] == row["value"] and len(v["candidates"]) == 2)
-    check("verification still not set by editing", res["document"]["verified"] is False)
-
-    # --- tabs
-    b.js("document.querySelector('.tab[data-tab=\"fields\"]').click()")
-    check("Fields tab (as-printed) still works",
-          b.js("!document.getElementById('tab-fields').classList.contains('hidden') && document.querySelectorAll('tr.pdf-field').length > 0"))
-    b.js("document.querySelector('.tab[data-tab=\"raw\"]').click()")
-    check("raw_json tab still works", _wait(b, "document.getElementById('raw-body').textContent.includes('\"pages\"')"))
-    check("review card hidden on the raw tab", b.js("document.getElementById('review-card').classList.contains('hidden')"))
-
-    # --- failure / partial banners
-    b.open(f"http://127.0.0.1:{PORT}/results/{docs['partial']}")
-    b.wait("document.querySelectorAll('#tab-structured tr.s-row').length > 0")
-    check("partial document shows the partial banner", b.js("document.querySelector('#tab-structured .alert.warn') !== null"))
-    check("accused section says none found (not invented)",
-          b.js("document.querySelector('#tab-structured details[data-section=\"accused\"]').textContent.includes('none found')"))
-    b.open(f"http://127.0.0.1:{PORT}/results/{docs['down']}")
-    b.wait("document.querySelectorAll('#tab-structured tr.s-row').length > 0")
-    check("unavailable model shows the failed banner and empty values",
-          b.js("document.querySelector('#tab-structured .alert.error') !== null")
-          and b.js("[...document.querySelectorAll('#tab-structured .edit-input')].every(i => i.value === '')"))
+        data = json.loads(text)
+        valid = True
+    except ValueError:
+        data, valid = {}, False
+    check(f"[{name}] JSON tab shows valid JSON", valid)
+    check(f"[{name}] JSON is indented and readable", text.startswith('{\n  "') and text == json.dumps(data, indent=2, ensure_ascii=False))
+    check(f"[{name}] JSON keys equal the Fields tab labels, in order", list(data) == dedupe_keys([f["label"] for f in fields]),
+          f"json={list(data)[:4]} fields={[f['label'] for f in fields][:4]}")
+    check(f"[{name}] JSON values equal the values shown in the Fields tab", list(data.values()) == [f["value"] for f in fields])
+    check(f"[{name}] every field in the Fields tab keeps its source page and review status",
+          all(f["page"] and f["review"] for f in fields))
+    check(f"[{name}] review card is shown with the JSON tab",
+          not b.js("document.getElementById('review-card').classList.contains('hidden')"))
     if shots:
-        b.shot(shots / "down.png")
+        b.shot(shots / f"{name}_json.png")
+
+
+def interactions(b: Browser, docs: dict, shots) -> None:
+    b.open(docs["template_a"])
+    fields = json.loads(b.js(FIELDS_DOM))
+    accused_key = "Particulars of accused persons charge sheeted"
+    open_json_tab(b)
+    data = json.loads(b.js(JSON_TEXT))
+    check("accused section is one JSON key with both accused and their arrest / remand notes",
+          accused_key in data and all(s in data[accused_key] for s in
+                                      ("A1- Pavan Kalyan", "Judicial Remand.)", "A2- Salma Begum", "released on bail.)")))
+    check("multi-line value keeps its line breaks", data[accused_key].count("\n") >= 3 and "\n" in data["List of witnesses"])
+    check("a field with no value is an empty string, not invented", data.get("Final result No./Year") == "")
+    check("an arrest note is not a key", not any(k.startswith("(Arrested") for k in data))
+
+    # --- unsaved edit is not in the JSON; saved edit is, without reprocessing
+    b.js("document.querySelector('.tab[data-tab=\"fields\"]').click()")
+    b.js("""(() => { const i = [...document.querySelectorAll('#tab-fields tr.pdf-field')]
+        .find(tr => tr.querySelector('.label-cell').textContent.trim() === 'FIR No.').querySelector('.edit-input');
+        i.value = '99/2021'; i.dispatchEvent(new Event('input', {bubbles: true})); })()""")
+    open_json_tab(b)
+    check("an unsaved edit is not in the JSON", json.loads(b.js(JSON_TEXT))["FIR No."] == "17/2021")
+    before = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/v1/documents/{docs['template_a']}"))["document"]
+    b.js("document.querySelector('.tab[data-tab=\"fields\"]').click()")
+    b.js("document.getElementById('save-corrections').click()")
+    check("saving keeps the reviewer on the Fields tab and reloads the data",
+          b.wait("!!document.querySelector('#tab-fields .badge.corrected')"))
+    open_json_tab(b)
+    after_json = json.loads(b.js(JSON_TEXT))
+    check("the saved correction is in the JSON immediately", after_json["FIR No."] == "99/2021")
+    check("the other keys are unchanged", {k: v for k, v in after_json.items() if k != "FIR No."} ==
+          {k: v for k, v in data.items() if k != "FIR No."})
+    after = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/v1/documents/{docs['template_a']}"))["document"]
+    check("no reprocessing happened (same processing time, still completed)",
+          after["processed_at"] == before["processed_at"] and after["status"] == "completed")
+    api = json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/v1/documents/{docs['template_a']}/results"))
+    fir = next(f for f in api["results"]["fields"] if f["label"] == "FIR No.")
+    check("machine value and correction are kept apart in the results", fir["value"] == "17/2021" and fir["corrected_value"] == "99/2021")
+    check("the JSON tab survived the reload as the active tab", b.js("document.querySelector('.tab.active').dataset.tab") == "json")
+
+    # --- copy / download
+    check("Copy and Download buttons are present", b.js("!!document.getElementById('json-copy') && !!document.getElementById('json-download')"))
+    check("Download builds a .json file named after the document",
+          b.js("""(() => { let name = ''; const orig = HTMLAnchorElement.prototype.click;
+            HTMLAnchorElement.prototype.click = function () { name = this.download; };
+            document.getElementById('json-download').click();
+            HTMLAnchorElement.prototype.click = orig; return name; })()""") == "a.json")
+
+    # --- existing Fields features
+    b.js("document.querySelector('.tab[data-tab=\"fields\"]').click()")
+    b.js("(()=>{const f=document.getElementById('field-filter'); f.value='eastmoor'; f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+    vis = json.loads(b.js("JSON.stringify([...document.querySelectorAll('tr.pdf-field:not(.hidden) .label-cell')].map(e=>e.textContent.trim()))"))
+    check("Fields filter still works", vis == ["District"], str(vis))
+    b.js("(()=>{const f=document.getElementById('field-filter'); f.value=''; f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+    check("source page and review status are still shown", b.js("document.querySelector('tr.pdf-field td:nth-child(4)').textContent.includes('p.1')"))
+    b.js("document.getElementById('history').open = true; document.getElementById('history').dispatchEvent(new Event('toggle'))")
+    check("correction history lists the saved correction",
+          b.wait("document.getElementById('history-body').textContent.includes('FIR') || document.getElementById('history-body').textContent.includes('p1-')"))
+    check("verification controls and reprocess are still there",
+          b.js("!!document.getElementById('verify-btn') && !!document.getElementById('verify-notes') && !!document.getElementById('reprocess-btn')"))
+    b.js("document.getElementById('verify-btn').click()")
+    check("verification without notes is refused by the page", b.wait("document.getElementById('save-msg').textContent.includes('notes')"))
+    if shots:
+        b.shot(shots / "fields_tab.png")
     check("no JavaScript errors in the browser", not b.errors, str(b.errors[:3]))
 
 
@@ -336,8 +281,7 @@ def main() -> int:
     shots = Path(args.shots) if args.shots else None
     if shots:
         shots.mkdir(parents=True, exist_ok=True)
-
-    docs, api, app = seed()
+    docs, app = seed()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
     for _ in range(40):
@@ -348,9 +292,9 @@ def main() -> int:
             time.sleep(0.25)
     b = Browser()
     try:
-        for name in ("digital", "partial", "conflict", "scanned", "docx"):
-            verify_doc(b, name, docs[name], api[name], shots)
-        interactions(b, docs, api, shots)
+        for name in ("template_a", "template_b", "sample"):
+            verify_doc(b, name, docs[name], shots)
+        interactions(b, docs, shots)
     finally:
         b.close()
         server.should_exit = True
