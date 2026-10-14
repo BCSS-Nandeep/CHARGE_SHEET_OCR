@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.structured import StructuredData
+
 # 1.x: fixed charge-sheet schema (case / accused / witnesses / acts / narrative).
 # 2.0.0: per-document field list (label + value as printed, reading order).
 #        1.x payloads load with an empty field list and a "reprocess" warning.
@@ -142,6 +144,9 @@ class ChargeSheetData(BaseModel):
     extracted_at: datetime = Field(default_factory=datetime.utcnow)
     document_info: DocumentTypeInfo = Field(default_factory=DocumentTypeInfo)
     fields: List[PdfField] = Field(default_factory=list)
+    # Canonical field-mapped result (schema "structured 1.0") built by the local VLM; None
+    # when the VLM is not enabled or the result predates it. Additive: ``fields`` is unchanged.
+    structured: Optional[StructuredData] = None
     extraction_warnings: List[str] = Field(default_factory=list)
     # Mean OCR confidence over scanned pages (not accuracy); None for text-layer PDFs
     overall_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)

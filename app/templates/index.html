@@ -4,12 +4,12 @@
 {% block subtitle %}Local-only PDF extraction · template-independent mapping{% endblock %}
 {% block content %}
     <div class="card">
-      <h2>Upload charge sheet PDF</h2>
+      <h2>Upload charge sheet</h2>
       <div id="dropzone" class="dropzone" role="button" tabindex="0">
-        <p><strong>Drag & drop</strong> a PDF here</p>
-        <p class="hint">or click to select · digital or scanned · multi-page supported</p>
+        <p><strong>Drag & drop</strong> a PDF, image (PNG, JPEG, TIFF) or Word (DOCX) file here</p>
+        <p class="hint">or click to select · digital or scanned · multi-page supported · the original file is kept unchanged</p>
       </div>
-      <input id="file-input" type="file" accept="application/pdf,.pdf" class="hidden" />
+      <input id="file-input" type="file" accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg,image/tiff,.tif,.tiff,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" />
       <div id="file-meta" style="margin-top:1rem"></div>
       <div class="progress" id="progress"><span></span></div>
       <div class="row" style="margin-top:1rem">

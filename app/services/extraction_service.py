@@ -35,9 +35,11 @@ from app.services.docling_service import DoclingService
 from app.services.document_detector import DocumentDetector
 from app.services.field_builder import build_fields
 from app.services.form_parser import DocItem, drop_page_furniture
+from app.schemas.structured import PageStructuredInfo
 from app.services.layout_service import (
     Box,
     PageLayout,
+    TableRow,
     boxes_from_ocr,
     header_pairs_from_boxes,
     layout_from_boxes,
@@ -47,11 +49,15 @@ from app.services.layout_service import (
 )
 from app.services.ocr_service import OcrResult, OcrService
 from app.services.page_router import count_label_hits, need_docling_assist, ocr_accept
-from app.services.pdf_service import PageContent, PdfExtractionResult, PdfService
+from app.services.pdf_service import PageContent, PdfExtractionResult, PdfService, visual_rows_text
 from app.services.structure_service import StructureService
+from app.services.structured_mapper import PageObservations, StructuredMapper, merge_observations
+from app.services.structured_validation import validate_structured
 from app.services.template_service import TemplateService
 from app.services.text_normalize import soften_pdf_text
 from app.services.vl_service import VlService
+from app.services.vlm_client import VlmClient, VlmError, VlmTimeout, VlmUnavailable
+from app.services.vlm_text import ParsedPage, parse_transcription
 
 logger = get_logger(__name__)
 
@@ -75,6 +81,110 @@ class ExtractionService:
         self._structure_tables: Dict[int, List[List[str]]] = {}
         self._ocr_results: Dict[int, OcrResult] = {}
         self.last_raw: RawDocument = RawDocument()  # every line as read (stored separately from fields)
+        # Local vision-language model (page transcription + structured mapping)
+        self.vlm = VlmClient(self.settings)
+        self._vlm_pages: Dict[int, ParsedPage] = {}  # pages the VLM transcribed
+        self._vlm_down: Optional[str] = None  # set once the server is judged unreachable for this run
+        self._vlm_failures = 0  # consecutive transport failures
+        self._vlm_started = 0.0
+        self._transcribe_seconds: Dict[int, float] = {}
+
+    # ------------------------------------------------------------------
+    # VLM helpers
+    # ------------------------------------------------------------------
+
+    def _vlm_transcribes(self) -> bool:
+        """Scanned / garbled pages are read by the VLM (VLM_TRANSCRIBE_ENGINE=nanonets)."""
+        return self.settings.vlm_enabled and self.settings.vlm_transcribe_engine.lower() == "nanonets"
+
+    def _vlm_budget_left(self) -> bool:
+        budget = self.settings.vlm_document_budget_seconds
+        return not budget or time.monotonic() - self._vlm_started <= budget
+
+    def _vlm_note_failure(self, exc: VlmError) -> None:
+        if isinstance(exc, (VlmUnavailable, VlmTimeout)):
+            self._vlm_failures += 1
+            if self._vlm_failures >= max(1, self.settings.vlm_abort_after_failures):
+                self._vlm_down = f"{exc.code}: {exc.message}"
+        else:
+            self._vlm_failures = 0
+
+    @staticmethod
+    def _layout_from_parsed(parsed: ParsedPage, page_number: int) -> PageLayout:
+        """VLM lines / table rows → the layout the as-printed field builder reads (synthetic
+        vertical positions in reading order)."""
+        layout = PageLayout(text=parsed.mapping_text)
+        for y, (kind, content) in enumerate(parsed.items):
+            if kind == "row":
+                layout.rows.append(TableRow(page_number, list(content), "vlm_table", (0.0, float(y), 1.0, y + 0.5)))
+            else:
+                layout.free_lines.append((float(y), str(content)))
+        return layout
+
+    def _vlm_acquire_page(
+        self,
+        path: Path,
+        page: PageContent,
+        summary: PageSummary,
+        summaries: List[PageSummary],
+        layouts: Dict[int, PageLayout],
+        failed: List[str],
+        ordinal: int,
+        total: int,
+    ) -> bool:
+        """Read one scanned / garbled page with the VLM.
+
+        Returns True when the page is settled (read, or reported failed) and False when the
+        caller should continue with PaddleOCR — only if VLM_FALLBACK_ENGINE=paddleocr.
+        """
+        reason: Optional[str] = None
+        if self._vlm_down:
+            reason = f"model server unavailable for this document ({self._vlm_down})"
+        elif not self._vlm_budget_left():
+            reason = f"VLM time budget of {self.settings.vlm_document_budget_seconds}s exceeded"
+        else:
+            try:
+                self._report(f"Reading page {ordinal} of {total} with {self.vlm.model} (PDF page {page.page_number})")
+                png = self.pdf.render_page_image(path, page.page_number, max_side=self.settings.vlm_max_image_side)
+                reply = self.vlm.transcribe_image(png)
+                self._vlm_failures = 0
+                self._transcribe_seconds[page.page_number] = reply.seconds
+                parsed = parse_transcription(reply.text)
+                if parsed.char_count == 0:
+                    reason = "the model returned no text for this page (blank page?)"
+                else:
+                    self._vlm_pages[page.page_number] = parsed
+                    layouts[page.page_number] = self._layout_from_parsed(parsed, page.page_number)
+                    page.text = parsed.mapping_text
+                    page.char_count = len(page.text)
+                    summary.char_count = page.char_count
+                    summary.text_source = "ocr"  # read from the page image (not the text layer)
+                    summary.ocr_engine = "nanonets"
+                    summary.ocr_confidence = None  # the model reports none; none is invented
+                    if reply.truncated:
+                        summary.page_status = "partial"
+                        summary.note = "model output hit the token limit; the end of the page may be missing"
+                    else:
+                        summary.page_status = "ocr_ok"
+                    summaries.append(summary)
+                    return True
+            except VlmError as exc:
+                self._vlm_note_failure(exc)
+                reason = f"{exc.code}: {exc.message}"
+            except Exception as exc:  # rendering etc. — one bad page must not stop the document
+                reason = f"page could not be prepared for the model ({type(exc).__name__})"
+
+        if self.settings.vlm_fallback_engine.lower() == "paddleocr":
+            summary.note = f"VLM transcription failed ({reason}); PaddleOCR used (VLM_FALLBACK_ENGINE)"
+            return False
+        if page.route == "both" and (page.native_text or "").strip():
+            summary.text_source, summary.page_status = "native", "partial"
+            summary.note = f"VLM transcription failed ({reason}); using native text"
+        else:
+            failed.append(f"page {page.page_number}: {reason}")
+            summary.text_source, summary.page_status, summary.note = "none", "failed", reason
+        summaries.append(summary)
+        return True
 
     # ------------------------------------------------------------------
     # Stage helpers
@@ -121,6 +231,12 @@ class ExtractionService:
                 continue
 
             # route ocr | both
+            if self._vlm_transcribes():
+                done = sum(1 for s in summaries if s.route in ("ocr", "both"))
+                if self._vlm_acquire_page(path, page, summary, summaries, layouts, failed, done + 1, len(needed)):
+                    continue
+                # VLM_FALLBACK_ENGINE=paddleocr: the page falls through to PaddleOCR below
+
             reason: Optional[str] = None
             if not self.settings.ocr_enabled:
                 reason = "OCR disabled (OCR_ENABLED=false)"
@@ -212,7 +328,7 @@ class ExtractionService:
                         notes.append("OCR quality soft-fail: " + "; ".join(gate3_reasons))
                     if not layout.text.strip():
                         notes.append("OCR found no text (blank page?)")
-                    summary.note = "; ".join(notes) or summary.note
+                    summary.note = "; ".join(n for n in [summary.note] + notes if n) or None
 
                     if summary.page_status == "failed":
                         failed.append(f"page {page.page_number}: OCR empty")
@@ -363,17 +479,32 @@ class ExtractionService:
             except Exception:
                 pass
 
-    def process(self, path: Path, progress: Optional[Callable[[str], None]] = None) -> ChargeSheetData:
+    def process(
+        self,
+        path: Path,
+        progress: Optional[Callable[[str], None]] = None,
+        source_note: Optional[str] = None,
+    ) -> ChargeSheetData:
         started = time.monotonic()
         self.last_ocr_text = {}
         self._structure_tables = {}
         self._ocr_results = {}
         self.last_raw = RawDocument()
         self._progress = progress
+        self._vlm_pages, self._vlm_down, self._vlm_failures = {}, None, 0
+        self._vlm_started = started
+        self._transcribe_seconds = {}
         audit("extraction_start")
         self._report("Reading the PDF text layer")
         stage_results: List[StageResult] = []
         warnings: List[str] = []
+        if source_note:
+            warnings.append(source_note)
+        if self.settings.vlm_enabled:
+            health = self.vlm.health()
+            if not (health["reachable"] and health["model_available"]):
+                self._vlm_down = f"{health['error'] or 'model server not usable'}"
+                warnings.append(f"VLM_UNAVAILABLE: {self._vlm_down}. No page was sent to the model.")
 
         pdf_result = self.pdf.extract(path)  # unreadable/encrypted PDFs raise → document FAILED
         warnings.extend(pdf_result.warnings)
@@ -427,6 +558,9 @@ class ExtractionService:
             logger.warning("stage_failed stage=field_detection err=%s", safe_exc_message(exc))
             stage_results.append(StageResult(stage="field_detection", status=StageStatus.FAILED, detail=safe_exc_message(exc)))
 
+        if self.settings.vlm_enabled:
+            self._structured_stage(data, pdf_result, page_summaries, stage_results, warnings)
+
         full_text = "\n\n".join(soften_pdf_text(p.text) for p in pdf_result.pages if p.text)
         detection = self.detector.detect(full_text, [f.label for f in data.fields if f.label])
         data.document_info = DocumentTypeInfo(
@@ -470,6 +604,136 @@ class ExtractionService:
         )
         return data
 
+    def _mapping_texts(self, pdf_result: PdfExtractionResult, summaries: Dict[int, PageSummary]) -> Dict[int, str]:
+        """The page text each mapping request is given — the page as read, not as interpreted by
+        the field parser: the VLM's own lines / table rows, OCR text, or the text layer laid out
+        in visual rows (cells on one baseline joined with ``|``)."""
+        texts: Dict[int, str] = {}
+        for page in pdf_result.pages:
+            summ = summaries.get(page.page_number)
+            if summ is not None and summ.text_source == "none":
+                continue
+            if page.page_number in self._vlm_pages:
+                text = self._vlm_pages[page.page_number].mapping_text
+            elif summ is not None and summ.text_source in ("ocr", "both"):
+                text = page.text  # PaddleOCR / Tesseract reading order (merged with native text for "both")
+            else:
+                text = visual_rows_text(page.lines) or page.native_text or page.text
+            if (text or "").strip():
+                texts[page.page_number] = text
+        return texts
+
+    def _structured_stage(
+        self,
+        data: ChargeSheetData,
+        pdf_result: PdfExtractionResult,
+        page_summaries: List[PageSummary],
+        stage_results: List[StageResult],
+        warnings: List[str],
+    ) -> None:
+        """Map every readable page to the canonical structured schema with the VLM."""
+        started = time.monotonic()
+        mapper = StructuredMapper(self.vlm, self.settings)
+        summaries = {s.page_number: s for s in page_summaries}
+        texts = self._mapping_texts(pdf_result, summaries)
+        observations: List[PageObservations] = []
+        infos: List[PageStructuredInfo] = []
+        consecutive = 0
+        total = len(pdf_result.pages)
+        for n, page in enumerate(pdf_result.pages, start=1):
+            summ = summaries.get(page.page_number)
+            if summ is not None and summ.text_source == "ocr" and summ.ocr_engine:
+                engine = summ.ocr_engine  # nanonets | paddleocr | tesseract
+            elif summ is not None and summ.text_source == "both" and summ.ocr_engine:
+                engine = summ.ocr_engine
+            else:
+                engine = "pdf_text"
+            text_status = {"failed": "failed", "partial": "partial"}.get(summ.page_status if summ else "", "ok")
+            info = PageStructuredInfo(
+                page=page.page_number,
+                text_engine=engine if text_status != "failed" else "none",
+                text_status=text_status,
+                transcribe_seconds=self._transcribe_seconds.get(page.page_number),
+            )
+            text = texts.get(page.page_number, "")
+            skip: Optional[str] = None
+            if not text.strip():
+                skip = (summ.note if summ and summ.page_status == "failed" else None) or "page has no readable text"
+            elif self._vlm_down:
+                skip = f"model unavailable: {self._vlm_down}"
+            elif not self._vlm_budget_left():
+                skip = f"VLM time budget of {self.settings.vlm_document_budget_seconds}s exceeded"
+            if skip is not None:
+                info.mapping_status = "failed" if text.strip() else "skipped"
+                info.note = skip[:300]
+                infos.append(info)
+                continue
+            self._report(f"Mapping fields on page {n} of {total}")
+            low = text_status == "partial" or bool(
+                summ and summ.ocr_confidence is not None and summ.ocr_confidence < self.settings.ocr_accept_min_confidence
+            )
+            obs = mapper.map_page(page.page_number, text, text_engine=engine, low_quality=low)
+            obs.info.text_engine, obs.info.text_status = info.text_engine, info.text_status
+            obs.info.transcribe_seconds = info.transcribe_seconds
+            observations.append(obs)
+            infos.append(obs.info)
+            # a model that stops answering is not asked again for every remaining page
+            if obs.info.mapping_status == "failed" and ("vlm_unavailable" in (obs.info.note or "")
+                                                          or "vlm_timeout" in (obs.info.note or "")):
+                consecutive += 1
+                if consecutive >= max(1, self.settings.vlm_abort_after_failures):
+                    self._vlm_down = (obs.info.note or "model unavailable")[:200]
+            else:
+                consecutive = 0
+
+        narrative = [f.id for f in data.fields if f.text_block]
+        structured = merge_observations(
+            observations,
+            page_infos=infos,
+            mapping_model=self.vlm.model,
+            transcribe_engine=",".join(sorted({i.text_engine for i in infos if i.text_engine != "none"})) or None,
+            narrative_field_ids=narrative,
+            warnings=[w for w in warnings if w.startswith("VLM_")],
+        )
+        page_texts = {p: t for p, t in texts.items()}
+        structured.validation = validate_structured(structured, page_texts)
+        data.structured = structured
+        mapped = sum(1 for i in infos if i.mapping_status in ("ok", "partial"))
+        failed_pages = [i.page for i in infos if i.mapping_status == "failed"]
+        elapsed = time.monotonic() - started
+        if structured.document_status.value == "failed":
+            status = StageStatus.FAILED
+            warnings.append(
+                "STRUCTURED_MAPPING_FAILED: no page could be mapped to the structured fields"
+                + (f" ({infos[0].note})" if infos and infos[0].note else "")
+                + ". The as-printed fields are unaffected; no structured values were invented."
+            )
+        elif structured.document_status.value == "partial":
+            status = StageStatus.DEGRADED
+            warnings.append(
+                f"STRUCTURED_MAPPING_PARTIAL: pages {failed_pages or '(some)'} could not be fully mapped; "
+                "their structured fields may be missing."
+            )
+        else:
+            status = StageStatus.OK
+        stage_results.append(
+            StageResult(
+                stage="structured_mapping",
+                status=status,
+                detail=f"{mapped}/{total} page(s) mapped by {self.vlm.model or 'model'} in {elapsed:.0f}s; "
+                       f"{len(structured.validation.issues)} validation issue(s)",
+            )
+        )
+        audit(
+            "structured_mapping",
+            pages=total,
+            mapped=mapped,
+            failed=len(failed_pages),
+            seconds=round(elapsed, 1),
+            issues=len(structured.validation.issues),
+            status=structured.document_status.value,
+        )
+
     def _raw_document(self, pdf_result: PdfExtractionResult, page_summaries: List[PageSummary]) -> RawDocument:
         """Every text line read from each page, as read: text layer and/or OCR, nothing dropped."""
         summaries = {s.page_number: s for s in page_summaries}
@@ -481,6 +745,10 @@ class ExtractionService:
                 native = [ln for ln in page.lines if ln.text.strip()]
                 for i in reading_order([tuple(ln.bbox) for ln in native]):
                     lines.append(RawLine(line=0, text=native[i].text, source="native"))
+            vlm_page = self._vlm_pages.get(page.page_number)
+            if vlm_page is not None:  # lines exactly as the model read them (tags kept)
+                for text in vlm_page.raw_lines:
+                    lines.append(RawLine(line=0, text=text, source="vlm"))
             res = self._ocr_results.get(page.page_number)
             if res is not None and res.lines:
                 ocr = [ln for ln in res.lines if ln.text.strip()]
@@ -493,7 +761,7 @@ class ExtractionService:
                 RawPage(
                     page=page.page_number,
                     text_source=summary.text_source if summary else ("native" if lines else "none"),
-                    ocr_engine=res.engine if res is not None else None,
+                    ocr_engine=res.engine if res is not None else ("nanonets" if vlm_page is not None else None),
                     ocr_confidence=round(res.mean_confidence, 3) if res is not None and res.lines else None,
                     lines=lines,
                     note=None if lines else (summary.note if summary else "no text found on this page"),

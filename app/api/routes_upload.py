@@ -15,8 +15,9 @@ from app.repositories.document_repository import DocumentRepository
 from app.schemas.api_responses import ProcessingAcceptedResponse
 from app.schemas.document import DocumentStatus
 from app.security.auth import Principal, require_role
-from app.security.files import resolve_under, safe_store_filename, validate_pdf_upload
+from app.security.files import resolve_under, safe_store_filename, validate_upload
 from app.services.processing_service import enqueue_processing
+from app.services.source_prep import KINDS
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 
@@ -32,22 +33,22 @@ async def upload_document(
     settings: Settings = Depends(get_settings),
     principal: Principal = Depends(require_role("operator")),
 ) -> ProcessingAcceptedResponse:
-    data = await validate_pdf_upload(file, settings)
-    stored = safe_store_filename(file.filename or "document.pdf")
+    data, kind = await validate_upload(file, settings)
+    stored = safe_store_filename(file.filename or "document", KINDS[kind].ext)
     dest: Path = resolve_under(settings.upload_dir, stored)
 
-    async with aiofiles.open(dest, "wb") as out:
+    async with aiofiles.open(dest, "wb") as out:  # the original, byte for byte
         await out.write(data)
 
     repo = DocumentRepository(db)
     doc = repo.create(
-        original_filename=Path(file.filename or "document.pdf").name,
+        original_filename=Path(file.filename or "document").name,
         stored_filename=stored,
-        content_type=file.content_type or "application/pdf",
+        content_type=KINDS[kind].media_type,
         size_bytes=len(data),
     )
     repo.update_status(doc.id, DocumentStatus.QUEUED)
-    audit("upload_accepted", document_id=doc.id, size_bytes=len(data), user=principal.name)
+    audit("upload_accepted", document_id=doc.id, size_bytes=len(data), kind=kind, user=principal.name)
     enqueue_processing(doc.id)
 
     return ProcessingAcceptedResponse(

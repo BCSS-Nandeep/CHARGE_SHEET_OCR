@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
     def asset_version() -> str:
         """Changes whenever app.js / styles.css change, so browsers never keep an old copy."""
         stamps = []
-        for rel in ("js/app.js", "css/styles.css"):
+        for rel in ("js/app.js", "js/structured.js", "css/styles.css"):
             try:
                 stamps.append(str(int((BASE_DIR / "static" / rel).stat().st_mtime)))
             except OSError:

@@ -28,6 +28,8 @@ VIEWER_KEY = "test-viewer-key-0123456789"
 # OCR is slow (~1 min/page on CPU); OCR tests opt in with RUN_OCR_TESTS=1.
 os.environ.setdefault("OCR_ENABLED", "false")
 os.environ["ASYNC_PROCESSING"] = "false"
+# Tests never reach the shared model server unless a test mocks it or RUN_VLM_TESTS=1 opts in.
+os.environ["VLM_ENABLED"] = "false"
 os.environ["OFFLINE_MODE"] = "true"
 os.environ["ALLOW_EXTERNAL_NETWORK"] = "false"
 

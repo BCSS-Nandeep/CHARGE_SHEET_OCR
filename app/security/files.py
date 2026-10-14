@@ -5,21 +5,26 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
+from typing import Tuple
 
 from fastapi import HTTPException, UploadFile, status
 
 from app.config import Settings
+from app.services.source_prep import ACCEPTED_DESCRIPTION, detect_kind
 
-PDF_MAGIC = b"%PDF"
 _UNSAFE = re.compile(r"[^A-Za-z0-9._\-]+")
 
 
-def safe_store_filename(original_name: str) -> str:
-    """Generate a server-side filename; never trust client paths."""
+def safe_store_filename(original_name: str, ext: str = ".pdf") -> str:
+    """Generate a server-side filename; never trust client paths.
+
+    ``ext`` is the extension of the detected file type, so the stored name always
+    matches the content whatever the client called the file.
+    """
     stem = Path(original_name or "document").name
     stem = _UNSAFE.sub("_", stem)[:80] or "document"
-    if not stem.lower().endswith(".pdf"):
-        stem = f"{stem}.pdf"
+    if not stem.lower().endswith(ext):
+        stem = f"{stem}{ext}"
     return f"{uuid.uuid4().hex}_{stem}"
 
 
@@ -37,19 +42,13 @@ def resolve_under(root: Path, filename: str) -> Path:
     return candidate
 
 
-async def validate_pdf_upload(file: UploadFile, settings: Settings) -> bytes:
+async def validate_upload(file: UploadFile, settings: Settings) -> Tuple[bytes, str]:
+    """Read and check an upload; returns (content, kind) with kind from ``source_prep.KINDS``.
+
+    The type is decided from the file's content, never from its name or declared type.
+    """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-
-    name = file.filename.lower()
-    content_type = (file.content_type or "").lower()
-    if not name.endswith(".pdf") and content_type not in (
-        "application/pdf",
-        "application/x-pdf",
-        "binary/octet-stream",
-        "application/octet-stream",
-    ):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
     # Read in chunks so an oversized upload is rejected without buffering it all
     chunks = []
@@ -68,7 +67,16 @@ async def validate_pdf_upload(file: UploadFile, settings: Settings) -> bytes:
     data = b"".join(chunks)
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    # PDF spec allows the header within the first 1024 bytes
-    if PDF_MAGIC not in data[:1024]:
-        raise HTTPException(status_code=400, detail="File is not a valid PDF")
-    return data
+    kind = detect_kind(data, file.filename)
+    if kind is None and (data.startswith(b"\x00\x05\x16\x07") or data.startswith(b"\x00\x05\x16\x00")):
+        raise HTTPException(
+            status_code=400,
+            detail="This is a macOS metadata file (a '._' shadow copy, a few hundred bytes), not the document. "
+                   "Upload the real file with the same name without the '._' prefix.",
+        )
+    if kind is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported or invalid file: accepted types are {ACCEPTED_DESCRIPTION}",
+        )
+    return data, kind

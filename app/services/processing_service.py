@@ -16,6 +16,7 @@ from app.schemas.charge_sheet import SCHEMA_VERSION, ExtractionStatus
 from app.schemas.document import DocumentStatus
 from app.security.files import resolve_under
 from app.services.extraction_service import ExtractionService
+from app.services.source_prep import prepare_source, source_note
 
 logger = get_logger(__name__)
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -126,14 +127,18 @@ def process_document(document_id: str) -> None:
             DocumentRepository(db).update_status(
                 document_id,
                 DocumentStatus.FAILED,
-                error_message="Stored PDF not found",
+                error_message="Stored document not found",
             )
         return
 
     try:
+        _set_progress(document_id, "Preparing the document")
+        work = prepare_source(path)  # the upload itself for a PDF; a derived PDF for an image / DOCX
         with session_scope() as db:
             extractor = ExtractionService(db=db)
-            data = extractor.process(path, progress=lambda step: _set_progress(document_id, step))
+            data = extractor.process(
+                work, progress=lambda step: _set_progress(document_id, step), source_note=source_note(path)
+            )
             _set_progress(document_id, "Saving results")
             repo = DocumentRepository(db)
             reapplied, skipped = repo.reapply_corrections(document_id, data)

@@ -1,0 +1,344 @@
+{
+ "description": "Raw answers of the real Nanonets-OCR2-3B model for the three pages of tests/fixtures/sample_03_multipage.pdf with the pairs-format prompt and narrowed sections (page 1: case; page 2: accused; page 3: case, acts, officers, witnesses), recorded 2026-10-14. Synthetic document. Shows placeholder fill-ins, invented values and mis-sectioned people the pipeline must survive.",
+ "model": "nanonets-ocr2-3b",
+ "answers": {
+  "1": {
+   "case": [
+    {
+     "k": "district",
+     "v": "North Zone"
+    },
+    {
+     "k": "police_station",
+     "v": "Hill View"
+    },
+    {
+     "k": "year",
+     "v": "2022"
+    },
+    {
+     "k": "fir_number",
+     "v": "55/2022"
+    },
+    {
+     "k": "crime_number",
+     "v": "9/2023"
+    },
+    {
+     "k": "fir_date",
+     "v": "Not Mentioned"
+    },
+    {
+     "k": "charge_sheet_number",
+     "v": "9/2023"
+    },
+    {
+     "k": "submission_date",
+     "v": "Not Mentioned"
+    },
+    {
+     "k": "court_name",
+     "v": "Not Mentioned"
+    },
+    {
+     "k": "jurisdiction",
+     "v": "Not Mentioned"
+    },
+    {
+     "k": "final_report_type",
+     "v": "Not Mentioned"
+    },
+    {
+     "k": "supplementary_or_original",
+     "v": "Not Mentioned"
+    }
+   ]
+  },
+  "2": {
+   "accused": [
+    {
+     "f": [
+      {
+       "k": "serial_no",
+       "v": "1"
+      },
+      {
+       "k": "name",
+       "v": "Karan Mehta"
+      },
+      {
+       "k": "parent_or_spouse",
+       "v": "N/A"
+      },
+      {
+       "k": "age",
+       "v": "N/A"
+      },
+      {
+       "k": "gender",
+       "v": "N/A"
+      },
+      {
+       "k": "address",
+       "v": "N/A"
+      },
+      {
+       "k": "occupation",
+       "v": "N/A"
+      },
+      {
+       "k": "alias",
+       "v": "N/A"
+      },
+      {
+       "k": "identification",
+       "v": "N/A"
+      },
+      {
+       "k": "contact",
+       "v": "N/A"
+      },
+      {
+       "k": "arrest_status",
+       "v": "N/A"
+      },
+      {
+       "k": "list_heading",
+       "v": "N/A"
+      }
+     ]
+    },
+    {
+     "f": [
+      {
+       "k": "serial_no",
+       "v": "2"
+      },
+      {
+       "k": "name",
+       "v": "Neha Shah"
+      },
+      {
+       "k": "parent_or_spouse",
+       "v": "N/A"
+      },
+      {
+       "k": "age",
+       "v": "N/A"
+      },
+      {
+       "k": "gender",
+       "v": "N/A"
+      },
+      {
+       "k": "address",
+       "v": "N/A"
+      },
+      {
+       "k": "occupation",
+       "v": "N/A"
+      },
+      {
+       "k": "alias",
+       "v": "N/A"
+      },
+      {
+       "k": "identification",
+       "v": "N/A"
+      },
+      {
+       "k": "contact",
+       "v": "N/A"
+      },
+      {
+       "k": "arrest_status",
+       "v": "N/A"
+      },
+      {
+       "k": "list_heading",
+       "v": "N/A"
+      }
+     ]
+    },
+    {
+     "f": [
+      {
+       "k": "serial_no",
+       "v": "3"
+      },
+      {
+       "k": "name",
+       "v": "Unknown person (absconding)"
+      },
+      {
+       "k": "parent_or_spouse",
+       "v": "N/A"
+      },
+      {
+       "k": "age",
+       "v": "N/A"
+      },
+      {
+       "k": "gender",
+       "v": "N/A"
+      },
+      {
+       "k": "address",
+       "v": "N/A"
+      },
+      {
+       "k": "occupation",
+       "v": "N/A"
+      },
+      {
+       "k": "alias",
+       "v": "N/A"
+      },
+      {
+       "k": "identification",
+       "v": "N/A"
+      },
+      {
+       "k": "contact",
+       "v": "N/A"
+      },
+      {
+       "k": "arrest_status",
+       "v": "N/A"
+      },
+      {
+       "k": "list_heading",
+       "v": "N/A"
+      }
+     ]
+    }
+   ]
+  },
+  "3": {
+   "case": [
+    {
+     "k": "district",
+     "v": "JMFC North"
+    },
+    {
+     "k": "police_station",
+     "v": "North"
+    },
+    {
+     "k": "year",
+     "v": "2023"
+    },
+    {
+     "k": "fir_number",
+     "v": "123"
+    },
+    {
+     "k": "crime_number",
+     "v": "123"
+    },
+    {
+     "k": "fir_date",
+     "v": "2023-01-01"
+    },
+    {
+     "k": "charge_sheet_number",
+     "v": "1"
+    },
+    {
+     "k": "submission_date",
+     "v": "2023-01-01"
+    },
+    {
+     "k": "court_name",
+     "v": "JMFC North"
+    },
+    {
+     "k": "jurisdiction",
+     "v": "North"
+    },
+    {
+     "k": "final_report_type",
+     "v": "supplementary_or_original"
+    }
+   ],
+   "acts_and_sections": [
+    {
+     "f": [
+      {
+       "k": "act",
+       "v": "u/s 379 IPC"
+      }
+     ]
+    },
+    {
+     "f": [
+      {
+       "k": "section",
+       "v": "379"
+      },
+      {
+       "k": "description",
+       "v": "Theft of two-wheeler reported and investigated."
+      }
+     ]
+    }
+   ],
+   "investigating_officers": [
+    {
+     "f": [
+      {
+       "k": "name",
+       "v": "Local shopkeeper"
+      },
+      {
+       "k": "rank",
+       "v": "Not Mentioned"
+      }
+     ]
+    }
+   ],
+   "witnesses": [
+    {
+     "f": [
+      {
+       "k": "serial_no",
+       "v": "1"
+      },
+      {
+       "k": "name",
+       "v": "Local shopkeeper"
+      },
+      {
+       "k": "parent_or_spouse",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "age",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "gender",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "address",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "occupation",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "contact",
+       "v": "Not Mentioned"
+      },
+      {
+       "k": "role",
+       "v": "Not Mentioned"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

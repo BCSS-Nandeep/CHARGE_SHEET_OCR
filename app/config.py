@@ -82,6 +82,44 @@ class Settings(BaseSettings):
     # Persist per-page native/OCR text into results JSON (sensitive). Default off.
     store_page_text: bool = False
 
+    # Local vision-language model (OpenAI-compatible server, e.g. llama.cpp serving
+    # Nanonets-OCR2-3B). Disabled unless VLM_ENABLED=true; the URL and model name are
+    # read from the environment and never defaulted, so nothing is called by accident.
+    vlm_enabled: bool = False
+    vlm_base_url: str = ""  # e.g. http://127.0.0.1:8081/v1
+    vlm_model: str = ""
+    vlm_api_key: str = ""  # sent as a Bearer token when set; never logged
+    # Who turns scanned/garbled pages into text: "nanonets" (the VLM reads the page image)
+    # or "paddleocr" (local OCR; the VLM then only maps fields from that text).
+    vlm_transcribe_engine: str = "nanonets"
+    # Engine used for a page when the VLM transcription of it fails: "none" (the page
+    # is reported failed) or "paddleocr". Never switched to silently.
+    vlm_fallback_engine: str = "none"
+    vlm_timeout_seconds: int = 600  # per request (CPU inference is slow)
+    vlm_connect_timeout_seconds: int = 5
+    vlm_max_retries: int = 1  # extra attempts for timeouts / connection errors / 5xx only
+    vlm_retry_backoff_seconds: float = 5.0
+    vlm_max_image_side: int = 1536  # longest side, pixels, of a page image sent to the model
+    vlm_transcribe_max_tokens: int = 3072
+    # Mapping answers are short; a longer one is a runaway on a shared single-slot server
+    vlm_map_max_tokens: int = 1500
+    vlm_map_chunk_chars: int = 9000  # page text per mapping request (server context is small)
+    # A page with more text than this is asked one section per request (the model fills every field
+    # it is shown, so one big answer hits the token limit on a dense page)
+    vlm_map_split_chars: int = 1800
+    # ...and a list section (accused, witnesses, ...) of such a page is asked in pieces of at most
+    # this many characters: its answer grows with the number of people listed
+    vlm_map_list_chunk_chars: int = 1100
+    vlm_min_page_chars: int = 20  # pages with less text are not sent for mapping
+    # Consecutive connection failures after which the remaining pages are skipped
+    vlm_abort_after_failures: int = 2
+    # Time budget for a whole document on the VLM path (0 = unlimited); pages past it are
+    # skipped and the document is reported partial.
+    vlm_document_budget_seconds: int = 7200
+    # Wait for the shared server's single slot to be free before each request (read-only
+    # /slots check; 0 = send immediately and let the server queue the request).
+    vlm_wait_idle_seconds: int = 0
+
     # /docs and /redoc make the *browser* load Swagger/ReDoc assets from cdn.jsdelivr.net.
     # Disable on air-gapped networks.
     api_docs_enabled: bool = True

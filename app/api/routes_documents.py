@@ -21,8 +21,10 @@ from app.schemas.api_responses import (
 from app.schemas.document import DocumentStatus, ProcessingProgress
 from app.security.auth import Principal, require_api_key, require_role
 from app.security.files import resolve_under
+from app.services.pdf_service import PdfService
 from app.services.processing_service import enqueue_processing, get_progress, is_inflight
 from app.services.retention_service import delete_document_content
+from app.services.source_prep import KINDS, kind_of_path, prepare_source
 from app.services.template_service import TemplateService
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
@@ -84,14 +86,44 @@ def get_source_pdf(
     doc = _get_live(repo, document_id)
     path = resolve_under(settings.upload_dir, doc.stored_filename)
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Source PDF not available")
+        raise HTTPException(status_code=404, detail="Source document not available")
+    kind = kind_of_path(path)
     return FileResponse(
         path,
-        media_type="application/pdf",
+        media_type=KINDS[kind].media_type,
         filename=doc.original_filename,
-        content_disposition_type="inline",
+        # a DOCX cannot be shown inline by a browser
+        content_disposition_type="attachment" if kind == "docx" else "inline",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get(
+    "/documents/{document_id}/pages/{page}/image",
+    dependencies=[Depends(require_api_key)],
+)
+def get_page_image(
+    document_id: str,
+    page: int,
+    width: int = Query(900, ge=200, le=2400),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """PNG of one page for the side-by-side preview (rendered from the stored document;
+    for an image / DOCX upload, from the PDF derived from it). The original is untouched."""
+    repo = DocumentRepository(db)
+    doc = _get_live(repo, document_id)
+    path = resolve_under(settings.upload_dir, doc.stored_filename)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Source document not available")
+    try:
+        work = prepare_source(path)
+        png = PdfService().render_page_image(work, page, max_side=width * 2)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Page not found")
+    except Exception:
+        raise HTTPException(status_code=422, detail="This document cannot be shown as page images")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 @router.post(

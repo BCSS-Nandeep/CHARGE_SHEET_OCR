@@ -106,10 +106,11 @@ function bindApiKeyForm() {
         h.ppstructure_available ? "PP-Structure on" : "PP-Structure off",
         h.docling_available ? "Docling on" : "Docling off",
         h.vl_available ? "VL on" : "VL off",
+        h.vlm_enabled ? (h.vlm_available ? `vision model: ${h.vlm_model}` : `vision model unavailable${h.vlm_error ? " (" + h.vlm_error + ")" : ""}`) : "vision model off",
         h.offline_mode ? "offline mode" : "network allowed",
       ];
       status.textContent = parts.join(" · ");
-      if (!h.ocr_available || h.auth_misconfigured) status.classList.add("warn-text");
+      if (!h.ocr_available || h.auth_misconfigured || (h.vlm_enabled && !h.vlm_available)) status.classList.add("warn-text");
     }
   }).catch(() => {});
 }
@@ -149,8 +150,8 @@ function initUploadPage() {
 
   uploadBtn.addEventListener("click", () => {
     if (!selected) return;
-    if (!selected.name.toLowerCase().endsWith(".pdf")) {
-      setAlert(statusEl, "Only PDF files are accepted.", "error");
+    if (!/\.(pdf|png|jpe?g|tiff?|docx)$/i.test(selected.name)) {
+      setAlert(statusEl, "Accepted files: PDF, PNG, JPEG, TIFF or DOCX.", "error");
       return;
     }
     uploadBtn.disabled = true;
@@ -194,6 +195,8 @@ function initUploadPage() {
 function initResultsPage(documentId) {
   bindApiKeyForm();
   const root = document.getElementById("results-root");
+  const viewState = { tab: null, page: 1, filter: "", onlyReview: false };  // survives re-renders after saving
+  const pageCache = new Map();  // page number → blob URL of the rendered page
   const pollNote = document.getElementById("poll-note");
   const docUrl = `/api/v1/documents/${encodeURIComponent(documentId)}`;
 
@@ -210,7 +213,7 @@ function initResultsPage(documentId) {
       pollNote.classList.remove("hidden");
       const p = doc.progress;
       pollNote.textContent = p
-        ? `Processing — ${p.step} · ${formatElapsed(p.elapsed_seconds)} elapsed. Scanned pages are OCR'd locally (about 30–40 s per page on this machine). This page refreshes automatically.`
+        ? `Processing — ${p.step} · ${formatElapsed(p.elapsed_seconds)} elapsed. Pages are read locally: a scanned page can take from half a minute (OCR) to several minutes (vision model). This page refreshes automatically.`
         : `Waiting to start (status: ${doc.status}). This page refreshes automatically.`;
       root.innerHTML = "";
       setTimeout(load, 2500);
@@ -238,7 +241,7 @@ function initResultsPage(documentId) {
         <div class="meta-item"><div class="label">Verified</div><div class="value">${doc.verified ? `yes — ${escapeHtml(doc.verified_by || "")}` : "no"}</div></div>
         <div class="meta-item"><div class="label">Uploaded</div><div class="value">${escapeHtml(doc.created_at)}</div></div>
         <div class="meta-item"><div class="label">Document ID</div><div class="value mono">${escapeHtml(doc.id)}</div></div>
-        <div class="meta-item"><div class="label">Source PDF</div><div class="value"><a href="#" id="source-link">Open PDF</a></div></div>
+        <div class="meta-item"><div class="label">Original file</div><div class="value"><a href="#" id="source-link">Open original</a></div></div>
       </div>`;
     document.getElementById("source-link").addEventListener("click", async (e) => {
       e.preventDefault();
@@ -388,12 +391,13 @@ function initResultsPage(documentId) {
     root.querySelectorAll(".tab").forEach((btn) => {
       btn.onclick = () => {
         const tab = btn.dataset.tab;
+        viewState.tab = tab;
         root.querySelectorAll(".tab").forEach((b) => {
           b.classList.toggle("active", b === btn);
           b.setAttribute("aria-selected", String(b === btn));
         });
-        document.getElementById("tab-fields").classList.toggle("hidden", tab !== "fields");
-        document.getElementById("tab-raw").classList.toggle("hidden", tab !== "raw");
+        root.querySelectorAll('[id^="tab-"]').forEach((panel) => panel.classList.toggle("hidden", panel.id !== `tab-${tab}`));
+        document.getElementById("review-card").classList.toggle("hidden", tab === "raw");
         if (tab === "raw") loadRaw();
       };
     });
@@ -429,7 +433,12 @@ function initResultsPage(documentId) {
       return;
     }
     const fields = r.fields || [];
-    const legacy = (r.extraction_warnings || []).some((w) => w.startsWith("REPROCESS_REQUIRED"));
+    const structured = r.structured || null;
+    // Structured is the default view when the result has it; the reviewer's tab / page / filter survive a reload
+    const tabs = (structured ? [["structured", "Structured"]] : []).concat([["fields", "Fields"], ["raw", "raw_json"]]);
+    const firstTab = tabs.some(([key]) => key === viewState.tab) ? viewState.tab : tabs[0][0];
+    viewState.tab = firstTab;
+    const legacy =(r.extraction_warnings || []).some((w) => w.startsWith("REPROCESS_REQUIRED"));
     const banner = legacy
       ? `<div class="alert warn"><strong>Reprocess required.</strong> This result was made by an older version with a fixed field list. Click <em>Reprocess</em> to detect the fields in this PDF.</div>`
       : r.extraction_status === "partial"
@@ -446,15 +455,16 @@ function initResultsPage(documentId) {
           <div class="meta-item"><div class="label">Document type</div><div class="value">${escapeHtml(r.document_info?.document_type || "—")}</div></div>
           <div class="meta-item"><div class="label">Fields found</div><div class="value">${fields.length} (${labelled} with a label)</div></div>
           <div class="meta-item"><div class="label">OCR confidence (not accuracy)</div><div class="value">${escapeHtml(r.overall_confidence ?? "—")}</div></div>
-          <div class="meta-item"><div class="label">Schema</div><div class="value">${escapeHtml(r.schema_version)}</div></div>
+          <div class="meta-item"><div class="label">Structured fields</div><div class="value">${structured ? badge(structured.document_status) : '<span class="muted">not run (VLM off or older result)</span>'}</div></div>
+          <div class="meta-item"><div class="label">Schema</div><div class="value">${escapeHtml(r.schema_version)}${structured ? ` · structured ${escapeHtml(structured.schema_version)}` : ""}</div></div>
         </div>
         ${warningsList(r.extraction_warnings)}
         <details><summary>Pipeline stages and pages</summary>${stagesTable(r.stage_results)}${pagesTable(r.page_summaries)}</details>
       </div>
       <div class="tabs" role="tablist">
-        <button class="tab active" role="tab" data-tab="fields" aria-selected="true">Fields</button>
-        <button class="tab" role="tab" data-tab="raw" aria-selected="false">raw_json</button>
+        ${tabs.map(([key, text]) => `<button class="tab${key === firstTab ? " active" : ""}" role="tab" data-tab="${key}" aria-selected="${key === firstTab}">${text}</button>`).join("")}
       </div>
+      ${structured ? `<div id="tab-structured"${firstTab === "structured" ? "" : ' class="hidden"'}></div>` : ""}
       <div id="tab-raw" class="hidden">
         <div class="card section">
           <div class="row">
@@ -468,7 +478,7 @@ function initResultsPage(documentId) {
           <div id="raw-body" class="raw-json muted">Loading…</div>
         </div>
       </div>
-      <div id="tab-fields">
+      <div id="tab-fields"${firstTab === "fields" ? "" : ' class="hidden"'}>
       ${unresolvedSection(r.unresolved_content)}
       <div class="card section">
         <div class="row">
@@ -477,9 +487,10 @@ function initResultsPage(documentId) {
         </div>
       </div>
       ${pageSections(fields)}
-      <div class="card section">
+      </div>
+      <div id="review-card" class="card section">
         <h3>Review</h3>
-        <p class="muted">Only fields you change are saved as corrections; extracted values are never overwritten.</p>
+        <p class="muted">Only fields you change (in the Structured or Fields tab) are saved as corrections; extracted values are never overwritten. Nothing is verified until a reviewer marks it so.</p>
         <div class="row">
           <button class="btn" id="save-corrections">Save changed fields</button>
           <button class="btn secondary" id="reprocess-btn">Reprocess</button>
@@ -490,10 +501,20 @@ function initResultsPage(documentId) {
         </div>
         <div id="save-msg" class="hidden"></div>
         <details id="history"><summary>Correction history</summary><div id="history-body" class="muted">Loading…</div></details>
-      </div>
       </div>`;
 
     bindRawTab();
+    if (structured && window.StructuredView) {
+      window.StructuredView.render(document.getElementById("tab-structured"), {
+        structured,
+        layout: payload.structured_layout || [],
+        fields,
+        docUrl,
+        pageCount: doc.page_count,
+        state: viewState,
+        pageCache,
+      });
+    }
 
     document.getElementById("field-filter").addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();

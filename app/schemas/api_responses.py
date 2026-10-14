@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.charge_sheet import ChargeSheetData, ReviewStatus
 from app.schemas.document import DocumentMeta, DocumentStatus
+from app.schemas.structured import layout_definition
 
 
 class HealthResponse(BaseModel):
@@ -23,6 +24,12 @@ class HealthResponse(BaseModel):
     ppstructure_available: bool = False
     docling_available: bool = False
     vl_available: bool = False
+    # Local vision-language model: configured, reachable, model served (read-only check)
+    vlm_enabled: bool = False
+    vlm_available: bool = False
+    vlm_model: Optional[str] = None
+    vlm_transcribe_engine: Optional[str] = None
+    vlm_error: Optional[str] = None
     store_page_text: bool = False
     auth_enabled: bool = False
     auth_misconfigured: bool = False
@@ -51,6 +58,8 @@ class ResultsResponse(BaseModel):
     document: DocumentMeta
     results: Optional[ChargeSheetData] = None
     field_corrections: Dict[str, Any] = Field(default_factory=dict)
+    # Sections / fields of results.structured (labels, order, repeated or not): the UI is built from this
+    structured_layout: List[dict] = Field(default_factory=layout_definition)
 
 
 class DocumentListResponse(BaseModel):

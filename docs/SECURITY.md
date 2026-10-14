@@ -12,18 +12,29 @@ FastAPI (127.0.0.1 by default)
         ├─ Upload store (UPLOAD_DIR, server-generated names)
         ├─ SQLite / private PostgreSQL (results, corrections, audit trail)
         ├─ PyMuPDF — in-process text/table extraction
-        └─ PaddleOCR / Tesseract — in-process / local binary OCR, models cached on disk
+        ├─ PaddleOCR / Tesseract — in-process / local binary OCR, models cached on disk
+        └─ Local vision-language model (optional, VLM_ENABLED) — OpenAI-compatible server on this host
 ```
 
-No cloud AI, OCR, telemetry or error-reporting service is called. There is no LLM integration in the code;
-the `LLM_*` settings are placeholders that `scripts/verify_offline.py` checks stay local-only.
+No cloud AI, OCR, telemetry or error-reporting service is called. The optional vision-language model
+(`VLM_*` settings; Nanonets-OCR2-3B on a llama.cpp server) is called **only at `VLM_BASE_URL`**, which must be a
+loopback / private address or a host listed in `NETWORK_ALLOWLIST`: with `OFFLINE_MODE=true` the client refuses
+any other host before connecting, and the socket guard blocks it again. Whoever runs that server sees the page
+images and page text sent to it — keep it on the same host or a trusted private network. The model server may be
+shared with other applications; this service sends one request at a time and never logs prompts, replies,
+page text, page images or the optional `VLM_API_KEY` (only counts, durations and error codes). The `LLM_*`
+settings remain unused placeholders that `scripts/verify_offline.py` checks stay local-only.
 
 ## Data flow
 
-1. Client uploads a PDF. The server reads it in 1 MB chunks (rejecting > `MAX_UPLOAD_SIZE_MB` early), checks
-   the `%PDF` header, and stores it under `<uuid>_<sanitised name>.pdf` inside `UPLOAD_DIR` (traversal-proof).
+1. Client uploads a PDF, PNG, JPEG, TIFF or DOCX. The server reads it in 1 MB chunks (rejecting >
+   `MAX_UPLOAD_SIZE_MB` early), decides the type from the file's **content** (magic bytes; a DOCX must be a zip
+   with `word/document.xml`), and stores the original, unchanged, under `<uuid>_<sanitised name><ext>` inside
+   `UPLOAD_DIR` (traversal-proof). For an image or DOCX a derived `<stored name>.pages.pdf` (same content, as a
+   PDF) is written beside it; it is deleted with the document.
 2. A background worker extracts text (PyMuPDF). Pages without a text layer are rendered to PNG **in memory**
-   and OCR'd locally. No page images or text are written to disk or logs.
+   and read locally (PaddleOCR, or the local vision model). No page images or text are written to disk or logs;
+   the page preview endpoint renders a page on request and does not store it.
 3. Parsing, mapping, validation and conflict detection run in-process.
 4. Results (which include personal data) are stored in the database, and so is the raw text of every page
    (`results.raw_json`, served by `GET /api/v1/documents/{id}/raw` to any valid API key, same as results). It is
@@ -39,6 +50,7 @@ the `LLM_*` settings are placeholders that `scripts/verify_offline.py` checks st
 | PyPI packages | install time only | install on a controlled network |
 | PaddleOCR models | first use only | prefetch on a controlled network; at runtime `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` is forced on and the network guard blocks downloads |
 | Swagger UI assets (`/docs`) | browser, when /docs is opened | `API_DOCS_ENABLED=false` on air-gapped networks |
+| Local VLM server | per page, when `VLM_ENABLED` | `VLM_BASE_URL` must be local/private (checked before connecting); one request at a time |
 | Cloud LLM / OCR / telemetry | never | not in the code |
 
 `OFFLINE_MODE=true` installs a best-effort guard (`app/security/network_guard.py`) that patches

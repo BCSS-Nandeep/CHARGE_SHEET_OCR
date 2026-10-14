@@ -20,7 +20,7 @@ class RawLine(BaseModel):
 
     line: int  # 1-based position on the page
     text: str
-    source: str  # native | ocr
+    source: str  # native | ocr | vlm (read from the page image by the local vision model)
     confidence: Optional[float] = None  # OCR confidence; None for text-layer lines
 
 

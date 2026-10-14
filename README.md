@@ -23,6 +23,10 @@ result over a REST API and an editable review UI.
 - The built-in label vocabulary is used only to *recognise* that a phrase is a label — labels are never
   renamed. Scanner watermarks ("Scanned with CamScanner") and header/footer lines repeated on several
   pages are left out; missing spaces in glued PDF exports are restored
+- **Structured fields** (optional local vision model, schema 1.0): fixed sections and field names for every
+  layout, per-value status / source page / source text, conflicts with all candidates kept, side-by-side page
+  preview, editable with corrections kept apart from machine values — see the section below
+- PDF, PNG, JPEG, TIFF and DOCX uploads (originals kept unchanged)
 - **raw_json** tab in the UI and `/raw` endpoint: every line read from each page exactly as read (text layer
   or OCR), top to bottom, with OCR confidence — nothing dropped, grouped or corrected; stored
   locally next to the results and deleted with the document
@@ -73,6 +77,100 @@ never as an empty successful extraction. `GET /health` shows `ocr_available`, `o
 - **Tesseract (fallback):** install the Tesseract binary *and* `pip install pytesseract`; set `TESSERACT_CMD`
   if `tesseract.exe` is not on PATH. The Python wrapper alone is not an OCR engine.
 
+## Structured extraction with a local vision-language model
+
+The as-printed field list above is unchanged. With `VLM_ENABLED=true` the service also builds a **structured**
+result (`results.structured`, schema `1.0`): the same sections and field names for every document, whatever
+its layout — case details, complainant, informant, acts and sections, investigating officers, accused,
+witnesses, property — each value with its status, source page and source text. The UI shows it in a
+**Structured** tab (the default), with the page image beside the fields.
+
+### Setup
+
+Configure the model server in `.env` (see `.env.example`; nothing is hardcoded and there is no default URL):
+
+| Key | Meaning |
+|---|---|
+| `VLM_ENABLED` | `true` turns the structured pipeline on |
+| `VLM_BASE_URL`, `VLM_MODEL`, `VLM_API_KEY` | OpenAI-compatible server, model name, optional bearer token (never logged) |
+| `VLM_TRANSCRIBE_ENGINE` | `nanonets` (default): the model reads scanned / garbled page **images**. `paddleocr`: PaddleOCR reads them (about 35 s/page) and the model only maps fields — use it to compare speed and quality |
+| `VLM_FALLBACK_ENGINE` | `none` (default): a page the model cannot read is reported **failed**. `paddleocr`: that page is read by PaddleOCR instead and the page summary says so. Never switched silently |
+| `VLM_TIMEOUT_SECONDS`, `VLM_MAX_RETRIES`, `VLM_RETRY_BACKOFF_SECONDS` | per-request timeout; retries only for timeouts, connection errors and 5xx |
+| `VLM_ABORT_AFTER_FAILURES`, `VLM_DOCUMENT_BUDGET_SECONDS` | stop asking an unresponsive server / cap the time per document (remaining pages are skipped, result is *partial*) |
+| `VLM_MAX_IMAGE_SIDE`, `VLM_*_MAX_TOKENS`, `VLM_MAP_CHUNK_CHARS` | page image size and output / input limits |
+| `VLM_WAIT_IDLE_SECONDS` | wait (read-only `/slots` check) for a shared server to be idle before each request |
+
+`GET /health` reports `vlm_enabled`, `vlm_available` (server reachable and the model served), `vlm_model`.
+
+**The server handles one request at a time and may be shared with other applications.** This service sends
+one request at a time (process-wide lock) and does not change the server's configuration. On a CPU-only
+llama.cpp server (measured 2026-10-14 on the synthetic fixtures) a sparse scanned page took **19-75 s** to read
+(the slower figure while the server was busy with another application) and each page's mapping request
+**24-65 s**; a 3-page digital document took about 2.5 minutes. Dense real pages take longer, so a long scanned
+document can run for an hour; it runs in the background with per-page progress on the results page.
+The mapping request asks the model only about the sections a page shows signs of (heading / label vocabulary),
+which is what keeps it short and limits invented values; `VLM_MAP_MAX_TOKENS` (1500) stops a runaway answer.
+The model fills every field it is shown (with "N/A" filler that is discarded), so on a **dense page** (more than
+`VLM_MAP_SPLIT_CHARS` = 1800 characters) each section is asked in its own request, and a combined answer that is
+cut off at the token limit is retried one section at a time. A section that still cannot be mapped makes the page
+*partial*; only a page where every request failed is *failed*. (On the first run over real documents, dense pages
+were cut off at the cap and whole documents came back partial or failed — this is the fix.)
+These timings are from one machine and a small sample, not a benchmark.
+
+### How a page becomes structured fields
+
+1. **Text.** Digital pages use the PDF text layer (laid out in visual rows, cells joined with `|`). Scanned or
+   garbled pages go to the model as an image (or to PaddleOCR, see `VLM_TRANSCRIBE_ENGINE`); the model's
+   output (text, HTML tables) is kept as read in `raw_json` (`source: "vlm"`) and also feeds the as-printed
+   field builder. PaddleOCR is never run on a page the model already read.
+2. **Mapping.** Every readable page is sent, one request each, with a JSON-schema-constrained prompt; the
+   model returns **values only** (copied as printed, omitted when the page does not state them).
+3. **Grounding.** Python looks for each returned value in that page's text. The source page and source
+   text come from the matching line — never from the model. A value that is not on the page is kept and
+   marked `unverified`. An N/A counts as the document's answer only when a label for *that field* is next to
+   it; FIR number / crime number / dates / charge-sheet number need their own label near the value, else
+   `ambiguous` (`FIR No.` and `Crime No.` are never treated as interchangeable).
+4. **Merge.** Equal values from several pages become one value listing every page; different values become
+   `conflicting` with **every candidate kept** (nothing is overwritten or auto-resolved). A person on several
+   pages (same name) is one record; two people are never merged, and a name seen twice on one page is
+   flagged as a duplicate. Information that fits no field goes to *other details*.
+5. **Validation** (`app/services/structured_validation.py`, separate from mapping): schema shape, unexpected
+   keys, source-page references, value ⊂ source text ⊂ cited page, date / year / identifier / section
+   formats, duplicates, conflicts, expected fields missing (police station, FIR or crime number, accused,
+   acts). It reports; it never rewrites a value (a date that does not parse stays as printed and is flagged).
+
+### Output conventions
+
+Every value is `{value, status, source_page, source_text, pages, candidates, text_engine, needs_review,
+note, corrected_value, review_status, review_notes}`. Statuses (the only ones produced):
+
+| status | meaning |
+|---|---|
+| `extracted` | found verbatim in the page text under a fitting label |
+| `not_found` | no page states it (always present, never guessed) |
+| `explicit_na` | the document itself says N/A / nil / not applicable |
+| `illegible` | the value contains an unreadable-text marker |
+| `ambiguous` | present, but the label next to it does not fit this field |
+| `conflicting` | different pages disagree; `value` is `null`, `candidates` lists all |
+| `unverified` | the model returned it but it is not in the page text |
+
+`needs_review` is true for everything except `extracted` / `explicit_na` / `not_found`, and for any value from a
+page read with reduced quality. **No status means "verified"** — only a reviewer verifies a document, with
+notes. A human correction is stored in `corrected_value` beside the machine `value` (and in the correction
+history with the value it replaced); it survives a reprocess only if the machine value is unchanged.
+Repeated entities are arrays in `lists`; `structured_layout` in the results response lists sections, labels and
+order, which is all the UI uses to draw a result.
+
+### Image and DOCX uploads
+
+PNG, JPEG and TIFF (multi-frame) are accepted besides PDF; the type is decided from the content. The upload is stored
+unchanged. A one-page-per-image PDF (`<stored name>.pages.pdf`) is derived from it (EXIF orientation applied,
+other colour modes converted to RGB, images larger than 5000 px scaled down) and processed like any PDF.
+DOCX: paragraphs, tables (cell order kept) and embedded pictures are laid out **in reading order** into a derived
+PDF by PyMuPDF. **Page numbers for a DOCX refer to that rendition, not to Word's pages** — treat them as logical
+sections (the result carries a `DOCX_RENDITION` warning). Headers, footers, text boxes and floating shapes are not
+carried over, and there is no Word / LibreOffice on this machine to render the true layout.
+
 ## API
 
 ```powershell
@@ -86,14 +184,16 @@ curl.exe -s -H "X-API-Key: $K" http://127.0.0.1:8000/api/v1/documents/<id>/resul
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/health` | — | Health, OCR engine, auth configuration |
-| POST | `/api/v1/documents/upload` | operator | Upload a PDF (202, processed asynchronously) |
+| POST | `/api/v1/documents/upload` | operator | Upload a PDF, PNG, JPEG, TIFF or DOCX (202, processed asynchronously) |
 | GET | `/api/v1/documents` | viewer | List documents |
 | GET | `/api/v1/documents/{id}` | viewer | Metadata / processing status |
 | GET | `/api/v1/documents/{id}/results` | viewer | Field list (labels and values as printed). `422` with diagnostics (stages, pages, warnings) when extraction failed; `results: null` while processing |
 | GET | `/api/v1/documents/{id}/raw` | viewer | Raw JSON: every text line read from the PDF, page by page, as read (text, text layer or OCR, OCR confidence). `?download=true` returns it as `<name>_raw.json`; `404` for documents processed before raw capture (reprocess) |
-| GET | `/api/v1/documents/{id}/source` | viewer | Original PDF |
+| GET | `/api/v1/documents/{id}/structured` | viewer | **The one final structured JSON**: fixed sections / field names, final value (human correction else machine value) + machine value, status, source page / text, review flags, validation. `?download=true` saves it as `<name>_structured.json`; `404` when the VLM is not enabled or the extraction failed |
+| GET | `/api/v1/documents/{id}/source` | viewer | The original upload, byte for byte |
+| GET | `/api/v1/documents/{id}/pages/{n}/image?width=` | viewer | PNG of page *n* (from the derived PDF for an image / DOCX) — the side-by-side preview |
 | GET | `/api/v1/documents/{id}/corrections` | viewer | Correction / verification audit trail |
-| PATCH | `/api/v1/documents/{id}/fields` | operator | Corrections by `field_id` (e.g. `p1-03`; unknown ids → 400) |
+| PATCH | `/api/v1/documents/{id}/fields` | operator | Corrections by `field_id`: `p1-03` (as-printed) or `s.case.fir_number` / `s.accused.0.name` (structured); unknown ids → 400 |
 | POST | `/api/v1/documents/{id}/verify` | reviewer | Mark verified (notes required) |
 | POST | `/api/v1/documents/{id}/reprocess` | operator | Re-run extraction (resets verification) |
 | DELETE | `/api/v1/documents/{id}` | admin | Delete PDF, results and corrections |
@@ -108,6 +208,18 @@ python scripts\evaluate.py --ocr         # writes docs/ACCURACY_REPORT.md
 python scripts\evaluate_variants.py --n 150   # same template, different data (known templates)
 python scripts\verify_offline.py
 ```
+
+VLM pipeline (the default `pytest` run never contacts the model server — a fake stands in for it):
+
+```powershell
+pytest tests\test_structured_mapping.py tests\test_vlm_client.py tests\test_vlm_pipeline.py tests\test_structured_eval.py -q
+python scripts\verify_ui.py --shots shots     # drives headless Edge/Chrome: UI vs API JSON, interactions
+$env:RUN_VLM_TESTS="1"; pytest tests\test_vlm_live.py -q -s   # real inference (skips if the server is busy)
+python scripts\evaluate_structured.py [--private] [--max-pages N] [--wait SECONDS]   # field-level accuracy
+```
+
+`evaluate_structured.py` scores the machine values (never human corrections) with strict exact match and
+reports wrong, missing and fabricated values separately; it refuses to start while the shared model server is busy.
 
 `evaluate_variants.py` turns each known template into many documents of the same layout with different
 names, places, ages, phone numbers, FIR numbers, dates and sections, plus added/removed witnesses and
@@ -126,7 +238,7 @@ operational use.
 See `.env.example`. Important keys: `ENABLE_AUTH`, `API_KEY`, `API_KEYS`, `DATABASE_URL`, `UPLOAD_DIR`,
 `RETENTION_DAYS`, `OFFLINE_MODE`, `NETWORK_ALLOWLIST`, `OCR_ENABLED`, `OCR_ENABLE_MKLDNN`,
 `PPSTRUCTURE_ENABLED`, `DOCLING_ENABLED`, `VL_ENABLED`, `VL_REQUIRE_GPU`, `STORE_PAGE_TEXT`,
-`PROCESSING_TIMEOUT_SECONDS`, `MAX_UPLOAD_SIZE_MB`, `MAX_PAGES`, `CORS_ORIGINS`.
+`PROCESSING_TIMEOUT_SECONDS`, `MAX_UPLOAD_SIZE_MB`, `MAX_PAGES`, `CORS_ORIGINS`, and the `VLM_*` keys above.
 
 ## Project layout
 

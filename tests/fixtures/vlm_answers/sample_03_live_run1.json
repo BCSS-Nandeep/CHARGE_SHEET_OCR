@@ -1,0 +1,287 @@
+{
+ "description": "Raw answers of the real Nanonets-OCR2-3B model (first prompt version, form-style schema) for the three pages of tests/fixtures/sample_03_multipage.pdf, recorded 2026-10-14. Synthetic document. Shows the placeholder / echo / invented-value behaviour the pipeline must survive.",
+ "model": "nanonets-ocr2-3b",
+ "answers": {
+  "1": {
+   "case": {
+    "district": "North Zone",
+    "police_station": "Hill View",
+    "year": "2022",
+    "fir_number": "55/2022",
+    "crime_number": "",
+    "fir_date": "",
+    "charge_sheet_number": "9/2023",
+    "submission_date": "",
+    "court_name": "",
+    "jurisdiction": "",
+    "final_report_type": "",
+    "supplementary_or_original": ""
+   },
+   "complainant": {
+    "name": "",
+    "parent_or_spouse": "",
+    "age": "",
+    "gender": "",
+    "address": "",
+    "occupation": "",
+    "contact": ""
+   },
+   "informant": {
+    "name": "",
+    "parent_or_spouse": "",
+    "age": "",
+    "gender": "",
+    "address": "",
+    "occupation": "",
+    "contact": ""
+   },
+   "acts_and_sections": [
+    {
+     "act": "NDPS Act",
+     "section": "173",
+     "description": "Section 173 of the Narcotics and Deve"
+    }
+   ],
+   "investigating_officers": [
+    {
+     "name": "",
+     "rank": ""
+    }
+   ],
+   "accused": [
+    {
+     "serial_no": "",
+     "name": "",
+     "parent_or_spouse": "",
+     "age": "",
+     "gender": "",
+     "address": "",
+     "occupation": "",
+     "alias": "",
+     "identification": "",
+     "contact": ""
+    }
+   ],
+   "witnesses": [
+    {
+     "serial_no": "",
+     "name": "",
+     "parent_or_spouse": "",
+     "age": "",
+     "gender": "",
+     "address": "",
+     "occupation": "",
+     "contact": "",
+     "role": ""
+    }
+   ],
+   "property": [
+    {
+     "serial_no": "",
+     "description": "",
+     "quantity": "",
+     "seizure_date": "",
+     "seizure_place": ""
+    }
+   ]
+  },
+  "2": {
+   "case": {
+    "district": "district name",
+    "police_station": "police station name",
+    "year": "year of the FIR / case",
+    "fir_number": "the FIR number, only if labelled FIR / First Information Report",
+    "crime_number": "the crime number, only if labelled Crime No / Cr. No",
+    "fir_date": "date of the FIR / registration",
+    "charge_sheet_number": "charge sheet / final report number",
+    "submission_date": "date the charge sheet / final report was submitted",
+    "court_name": "court the report is submitted to",
+    "jurisdiction": "jurisdiction / circle / sub-division",
+    "final_report_type": "type of final report (charge sheet, undetected, ...)",
+    "supplementary_or_original": "original or supplementary"
+   },
+   "complainant": {
+    "name": "full name only, without s/o, age or address",
+    "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+    "age": "age as printed",
+    "gender": "sex/gender as printed",
+    "address": "residence address as printed",
+    "occupation": "Occupation",
+    "contact": "phone number"
+   },
+   "informant": {
+    "name": "full name only, without s/o, age or address",
+    "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+    "age": "age as printed",
+    "gender": "sex/gender as printed",
+    "address": "residence address as printed",
+    "occupation": "Occupation",
+    "contact": "phone number"
+   },
+   "acts_and_sections": [
+    {
+     "act": "the Act only, e.g. IPC, NDPS Act, BNS (no section numbers)",
+     "section": "section number(s) only, e.g. 307 or 8(c)",
+     "description": "offence description if printed"
+    }
+   ],
+   "investigating_officers": [
+    {
+     "name": "Name",
+     "rank": "rank such as SI, CI, DySP"
+    }
+   ],
+   "accused": [
+    {
+     "serial_no": "number or A1/A2 marker printed before the person",
+     "name": "full name only, without s/o, age or address",
+     "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+     "age": "age as printed",
+     "gender": "sex/gender as printed",
+     "address": "residence address as printed",
+     "occupation": "Occupation",
+     "alias": "Alias",
+     "identification": "Aadhaar / ID number if printed",
+     "contact": "phone number",
+     "arrest_status": "arrested / absconding / not arrested, as printed",
+     "list_heading": "the heading of the list the person appears under, as printed"
+    },
+    {
+     "serial_no": "number or A1/A2 marker printed before the person",
+     "name": "full name only, without s/o, age or address",
+     "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+     "age": "age as printed",
+     "gender": "sex/gender as printed",
+     "address": "residence address as printed",
+     "occupation": "Occupation",
+     "alias": "Alias",
+     "identification": "Aadhaar / ID number if printed",
+     "contact": "phone number",
+     "arrest_status": "arrested / absconding / not arrested, as printed",
+     "list_heading": "the heading of the list the person appears under, as printed"
+    },
+    {
+     "serial_no": "number or A1/A2 marker printed before the person",
+     "name": "full name only, without s/o, age or address",
+     "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+     "age": "age as printed",
+     "gender": "sex/gender as printed",
+     "address": "residence address as printed",
+     "occupation": "Occupation",
+     "alias": "Alias",
+     "identification": "Aadhaar / ID number if printed",
+     "contact": "phone number",
+     "arrest_status": "arrested / absconding / not arrested, as printed",
+     "list_heading": "the heading of the list the person appears under, as printed"
+    }
+   ],
+   "witnesses": [
+    {
+     "serial_no": "number or LW/PW marker printed before the person",
+     "name": "full name only, without s/o, age or address",
+     "parent_or_spouse": "the name after s/o, d/o, w/o, father or husband",
+     "age": "age as printed",
+     "gender": "sex/gender as printed",
+     "address": "residence address as printed",
+     "occupation": "Occupation",
+     "contact": "phone number",
+     "role": "role / relation to the case as printed"
+    }
+   ],
+   "property": [
+    {
+     "serial_no": "Serial no.",
+     "description": "item seized / property description",
+     "quantity": "Quantity",
+     "seizure_date": "Seizure date",
+     "seizure_place": "Seizure place"
+    }
+   ]
+  },
+  "3": {
+   "case": {
+    "district": "JMFC North",
+    "police_station": "JMFC North",
+    "year": "2023",
+    "fir_number": "Not Mentioned",
+    "crime_number": "Not Mentioned",
+    "fir_date": "Not Mentioned",
+    "charge_sheet_number": "Not Mentioned",
+    "submission_date": "Not Mentioned",
+    "court_name": "JMFC North",
+    "jurisdiction": "Not Mentioned",
+    "final_report_type": "Not Mentioned",
+    "supplementary_or_original": "Not Mentioned"
+   },
+   "complainant": {
+    "name": "Not Mentioned",
+    "parent_or_spouse": "Not Mentioned",
+    "age": "Not Mentioned",
+    "gender": "Not Mentioned",
+    "address": "Not Mentioned",
+    "occupation": "Not Mentioned",
+    "contact": "Not Mentioned"
+   },
+   "informant": {
+    "name": "Not Mentioned",
+    "parent_or_spouse": "Not Mentioned",
+    "age": "Not Mentioned",
+    "gender": "Not Mentioned",
+    "address": "Not Mentioned",
+    "occupation": "Not Mentioned",
+    "contact": "Not Mentioned"
+   },
+   "acts_and_sections": [
+    {
+     "act": "u/s 379 IPC",
+     "section": "Not Mentioned",
+     "description": "Not Mentioned"
+    }
+   ],
+   "investigating_officers": [
+    {
+     "name": "Not Mentioned",
+     "rank": "Not Mentioned"
+    }
+   ],
+   "accused": [
+    {
+     "serial_no": "Not Mentioned",
+     "name": "Not Mentioned",
+     "parent_or_spouse": "Not Mentioned",
+     "age": "Not Mentioned",
+     "gender": "Not Mentioned",
+     "address": "Not Mentioned",
+     "occupation": "Not Mentioned",
+     "alias": "Not Mentioned",
+     "identification": "Not Mentioned",
+     "contact": "Not Mentioned",
+     "arrest_status": "Not Mentioned",
+     "list_heading": "Not Mentioned"
+    }
+   ],
+   "witnesses": [
+    {
+     "serial_no": "1",
+     "name": "Local shopkeeper",
+     "parent_or_spouse": "Not Mentioned",
+     "age": "Not Mentioned",
+     "gender": "Not Mentioned",
+     "address": "Not Mentioned",
+     "occupation": "Not Mentioned",
+     "contact": "Not Mentioned",
+     "role": "Not Mentioned"
+    }
+   ],
+   "property": [
+    {
+     "serial_no": "Not Mentioned",
+     "description": "Not Mentioned",
+     "quantity": "Not Mentioned",
+     "seizure_date": "Not Mentioned",
+     "seizure_place": "Not Mentioned"
+    }
+   ]
+  }
+ }
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import List
@@ -20,7 +21,9 @@ from app.schemas.api_responses import (
 )
 from app.schemas.document import DocumentStatus
 from app.schemas.raw import RawResponse
+from app.schemas.structured import PATH_PREFIX
 from app.security.auth import Principal, require_api_key, require_role
+from app.services.structured_export import final_structured_json
 
 router = APIRouter(prefix="/api/v1/documents", tags=["results"])
 
@@ -68,6 +71,39 @@ def get_results(document_id: str, db: Session = Depends(get_db)) -> ResultsRespo
         document=repo.to_meta(doc),
         results=results,
         field_corrections=corrections,
+    )
+
+
+@router.get(
+    "/{document_id}/structured",
+    dependencies=[Depends(require_api_key)],
+)
+def get_structured(document_id: str, download: bool = False, db: Session = Depends(get_db)):
+    """The one final structured JSON for this chargesheet (fixed sections and field names, final
+    value + evidence + status per field). ``?download=true`` returns it as ``<name>_structured.json``."""
+    repo = DocumentRepository(db)
+    doc = _get_live(repo, document_id)
+    if doc.status in (DocumentStatus.UPLOADED.value, DocumentStatus.QUEUED.value, DocumentStatus.PROCESSING.value):
+        raise HTTPException(status_code=409, detail="Document is still being processed")
+    results = ResultsRepository(db).get(document_id)
+    if doc.status == DocumentStatus.FAILED.value or results is None or results.structured is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No structured result for this document (extraction failed, the vision model is not enabled, "
+                   "or it was processed by an older version) — reprocess it after enabling VLM_ENABLED",
+        )
+    body = final_structured_json(
+        results.structured, document_id=doc.id, file_name=doc.original_filename,
+        verified=bool(doc.verified), verified_by=doc.verified_by,
+    )
+    audit("structured_viewed", document_id=document_id, download=download)
+    if not download:
+        return body
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(doc.original_filename).stem)[:120] or "document"
+    return Response(
+        content=json.dumps(body, indent=2, ensure_ascii=False),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{stem}_structured.json"'},
     )
 
 
@@ -133,7 +169,17 @@ def patch_fields(
     if data is None:
         raise HTTPException(status_code=404, detail="Results not available")
     fmap = data.field_map()
-    unknown = [c.field_id for c in body.corrections if c.field_id not in fmap]
+
+    def machine_value(field_id: str):
+        """The extracted value a correction replaces (None when the id does not exist).
+        Ids "p1-03" are as-printed fields; "s.<section>.<field>" / "s.<section>.<n>.<field>" are
+        structured values."""
+        if field_id.startswith(PATH_PREFIX):
+            sv = data.structured.get_value(field_id[len(PATH_PREFIX):]) if data.structured else None
+            return None if sv is None else (sv.value or "")
+        return fmap[field_id].value if field_id in fmap else None
+
+    unknown = [c.field_id for c in body.corrections if machine_value(c.field_id) is None]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown field(s): {', '.join(unknown[:20])}")
 
@@ -142,7 +188,7 @@ def patch_fields(
         {
             "canonical_name": c.field_id,
             "corrected_value": c.corrected_value,
-            "original_value": fmap[c.field_id].value,
+            "original_value": machine_value(c.field_id),
             "review_status": c.review_status.value,
             "notes": c.notes,
             "reviewer": principal.name,

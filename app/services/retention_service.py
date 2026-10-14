@@ -14,6 +14,7 @@ from app.models import DocumentRecord
 from app.repositories.document_repository import DocumentRepository
 from app.schemas.document import DocumentStatus
 from app.security.files import resolve_under
+from app.services.source_prep import derived_path
 
 logger = get_logger(__name__)
 
@@ -26,8 +27,9 @@ def delete_document_content(repo: DocumentRepository, doc: DocumentRecord, uploa
     """
     try:
         path = resolve_under(upload_dir, doc.stored_filename)
-        if path.exists():
-            path.unlink()
+        for p in (path, derived_path(path)):  # the upload and the PDF derived from an image / DOCX
+            if p.exists():
+                p.unlink()
     except Exception as exc:
         logger.warning("delete_file_failed document_id=%s err=%s", doc.id, type(exc).__name__)
     repo.purge_content(doc)

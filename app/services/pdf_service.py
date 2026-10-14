@@ -145,16 +145,31 @@ class PdfService:
         finally:
             doc.close()
 
-    def render_page_image(self, path: Path, page_number: int) -> bytes:
-        """Render a page to PNG bytes for local OCR only."""
+    def render_page_image(self, path: Path, page_number: int, *, max_side: Optional[int] = None) -> bytes:
+        """Render a page to PNG bytes (local OCR, the VLM, and the page preview).
+
+        By default at ``OCR_DPI``; with ``max_side`` the page is scaled so its longest
+        side has that many pixels (never above the OCR resolution).
+        """
         doc = fitz.open(path)
         try:
             idx = page_number - 1
             if idx < 0 or idx >= len(doc):
                 raise ValueError("Invalid page number")
+            page = doc[idx]
             zoom = self.settings.ocr_dpi / 72.0
-            pix = doc[idx].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            if max_side:
+                zoom = min(zoom, max_side / max(float(page.rect.width), float(page.rect.height), 1.0))
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
             return pix.tobytes("png")
+        finally:
+            doc.close()
+
+    @staticmethod
+    def page_count(path: Path) -> int:
+        doc = fitz.open(path)
+        try:
+            return len(doc)
         finally:
             doc.close()
 
@@ -225,6 +240,33 @@ def _is_form_table(rows: List[List[str]]) -> bool:
         return False
     serial = sum(1 for f in firsts if re.fullmatch(r"\d{1,2}[.)]?", f))
     return serial >= 1 and serial >= 0.3 * len(firsts)
+
+
+def visual_rows_text(lines: List[TextLine]) -> str:
+    """The page's text lines as they look: lines on the same baseline form one row, joined with
+    ``" | "`` (table cells, label/value pairs), rows top to bottom. No label or value is
+    interpreted — this is the page's own text laid out in rows, for the mapping model."""
+    if not lines:
+        return ""
+    ordered = sorted(lines, key=lambda l: ((l.bbox[1] + l.bbox[3]) / 2, l.bbox[0]))
+    rows: List[List[TextLine]] = []
+    row_y = row_h = 0.0
+    for ln in ordered:
+        cy, h = (ln.bbox[1] + ln.bbox[3]) / 2, max(ln.bbox[3] - ln.bbox[1], 1.0)
+        if rows and abs(cy - row_y) <= 0.5 * max(h, row_h):
+            rows[-1].append(ln)
+            row_y = (row_y + cy) / 2
+        else:
+            rows.append([ln])
+            row_y, row_h = cy, h
+    out: List[str] = []
+    for row in rows:
+        row.sort(key=lambda l: l.bbox[0])
+        text = row[0].text
+        for prev, cur in zip(row, row[1:]):
+            text += (" " if cur.bbox[0] - prev.bbox[2] < 2.0 else " | ") + cur.text
+        out.append(text)
+    return "\n".join(out)
 
 
 def page_free_text(page: PageContent) -> Optional[str]:

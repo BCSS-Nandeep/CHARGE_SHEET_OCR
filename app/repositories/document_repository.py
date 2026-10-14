@@ -182,11 +182,25 @@ class DocumentRepository:
         source changed and the reviewer must look again. Returns (applied, skipped).
         """
         from app.schemas.charge_sheet import ReviewStatus
+        from app.schemas.structured import PATH_PREFIX
 
         fmap = data.field_map()
         applied = skipped = 0
         for name, corr in self.get_corrections(document_id).items():
             if name.startswith("_"):
+                continue
+            if name.startswith(PATH_PREFIX):
+                # structured value: only when it now holds the same machine value the reviewer corrected
+                sv = data.structured.get_value(name[len(PATH_PREFIX):]) if data.structured else None
+                if sv is None or corr.get("original_value") is None or (sv.value or "") != corr["original_value"]:
+                    skipped += 1
+                    continue
+                sv.corrected_value = corr["corrected_value"]
+                sv.review_status = corr["review_status"] if corr["review_status"] in (
+                    s.value for s in ReviewStatus) else "corrected"
+                if corr.get("notes"):
+                    sv.review_notes = corr["notes"]
+                applied += 1
                 continue
             field = fmap.get(name)
             if field is None or corr.get("original_value") is None or field.value != corr["original_value"]:

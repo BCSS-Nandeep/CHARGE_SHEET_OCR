@@ -12,6 +12,7 @@ from app.services.docling_service import DoclingService
 from app.services.ocr_service import OcrService
 from app.services.structure_service import StructureService
 from app.services.vl_service import VlService
+from app.services.vlm_client import VlmClient
 
 router = APIRouter(tags=["health"])
 
@@ -22,6 +23,7 @@ def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
     ocr = OcrService()
     ocr_status = ocr.status()
     misconfigured = auth_misconfigured(settings)
+    vlm = VlmClient(settings).health() if settings.vlm_enabled else None
     return HealthResponse(
         status="degraded" if misconfigured else "ok",
         service=settings.app_name,
@@ -34,6 +36,11 @@ def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
         ppstructure_available=StructureService().is_available(),
         docling_available=DoclingService().is_available(),
         vl_available=VlService().is_available(),
+        vlm_enabled=settings.vlm_enabled,
+        vlm_available=bool(vlm and vlm["reachable"] and vlm["model_available"]),
+        vlm_model=settings.vlm_model or None,
+        vlm_transcribe_engine=settings.vlm_transcribe_engine if settings.vlm_enabled else None,
+        vlm_error=vlm["error"] if vlm else None,
         store_page_text=settings.store_page_text,
         auth_enabled=settings.enable_auth,
         auth_misconfigured=misconfigured,
