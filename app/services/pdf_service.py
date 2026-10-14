@@ -145,14 +145,14 @@ class PdfService:
         finally:
             doc.close()
 
-    def render_page_image(self, path: Path, page_number: int) -> bytes:
-        """Render a page to PNG bytes for local OCR only."""
+    def render_page_image(self, path: Path, page_number: int, dpi: Optional[int] = None) -> bytes:
+        """Render a page to PNG bytes for local OCR / the local VLM only."""
         doc = fitz.open(path)
         try:
             idx = page_number - 1
             if idx < 0 or idx >= len(doc):
                 raise ValueError("Invalid page number")
-            zoom = self.settings.ocr_dpi / 72.0
+            zoom = (dpi or self.settings.ocr_dpi) / 72.0
             pix = doc[idx].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
             return pix.tobytes("png")
         finally:

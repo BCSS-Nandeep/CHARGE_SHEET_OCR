@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.logging_utils import get_logger, safe_exc_message
 from app.services.layout_service import HeaderPair
 from app.services.pdf_service import PageContent, PdfExtractionResult, PdfTable, TextLine
-from app.services.text_normalize import soften_pdf_text
+from app.services.text_normalize import normalize_doc_text
 
 logger = get_logger(__name__)
 
@@ -69,7 +69,7 @@ def _table_rows(tbl: ET.Element) -> List[List[str]]:
     for tr in tbl.findall(f"{W}tr"):
         cells = [_cell_text(tc) for tc in tr.findall(f"{W}tc")]
         if any(c.strip() for c in cells):
-            rows.append([soften_pdf_text(c) for c in cells])
+            rows.append([normalize_doc_text(c) for c in cells])
     return rows
 
 
@@ -124,10 +124,18 @@ class DocxService:
 
     def extract(self, path: Path) -> PdfExtractionResult:
         warnings: List[str] = []
+        image_count = 0
         try:
             with ZipFile(path) as zf:
-                if "word/document.xml" not in zf.namelist():
+                names = zf.namelist()
+                if "word/document.xml" not in names:
                     raise ValueError("File is not a valid Word document (missing word/document.xml)")
+                image_count = sum(
+                    1
+                    for n in names
+                    if n.startswith("word/media/")
+                    and n.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".emf", ".wmf"))
+                )
                 root = ET.fromstring(zf.read("word/document.xml"))
         except ValueError:
             raise
@@ -144,10 +152,15 @@ class DocxService:
         text_chunks: List[str] = []
         y = 0.0
         order = 0
+        if image_count:
+            warnings.append(
+                f"DOCX contains {image_count} embedded image(s); image OCR is not applied — "
+                "text inside images is not extracted"
+            )
 
         for child in list(body):
             if child.tag == f"{W}p":
-                text = soften_pdf_text(_para_text(child))
+                text = normalize_doc_text(_para_text(child))
                 if not text:
                     continue
                 y += 14.0
@@ -161,6 +174,10 @@ class DocxService:
                 table_base_y = y
                 consumed, order = self._emit_phys_grids(rows, header_pairs, table_base_y, order)
                 data_rows = [r for i, r in enumerate(rows) if i not in consumed]
+                # After a physical-feature label/value grid, leftover rows are
+                # printed option menus (Male/Female/Stout/…) — not answers.
+                if consumed and self._table_had_phys_labels(rows, consumed):
+                    data_rows = []
                 if data_rows and _is_column_header(data_rows[0]):
                     data_rows = data_rows[1:]
                 cleaned: List[List[str]] = []
@@ -205,7 +222,7 @@ class DocxService:
             native_text=full_text,
             tables=tables,
             lines=lines,
-            image_count=0,
+            image_count=image_count,
             image_coverage=0.0,
         )
         page._docx_header_pairs = header_pairs  # type: ignore[attr-defined]
@@ -221,6 +238,15 @@ class DocxService:
             is_scanned=False,
             warnings=warnings,
         )
+
+    @staticmethod
+    def _table_had_phys_labels(rows: List[List[str]], consumed: Set[int]) -> bool:
+        for idx in sorted(consumed):
+            if idx + 1 not in consumed:
+                continue
+            if _is_physical_feature_grid(rows[idx], rows[idx + 1]):
+                return True
+        return False
 
     def _emit_phys_grids(
         self,

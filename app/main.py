@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app import __version__
-from app.api import routes_documents, routes_health, routes_results, routes_upload
+from app.api import routes_documents, routes_health, routes_results, routes_standard, routes_upload
 from app.config import get_settings
 from app.db import init_db
 from app.logging_utils import get_logger, setup_logging
@@ -119,6 +119,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_upload.router)
     app.include_router(routes_documents.router)
     app.include_router(routes_results.router)
+    app.include_router(routes_standard.router)
 
     static_dir = BASE_DIR / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

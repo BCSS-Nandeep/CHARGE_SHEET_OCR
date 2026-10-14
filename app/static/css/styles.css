@@ -274,6 +274,12 @@ table.history tr:hover td { background: var(--bg-soft); }
 .edit-input { width: 100%; max-width: 360px; }
 textarea.edit-input { max-width: 100%; min-height: 90px; }
 .pdf-fields .serial-cell { width: 3rem; white-space: nowrap; }
+/* sub-heading row inside a section (standard-template results) */
+.field-table tr.group-row th {
+  background: var(--bg-soft); color: var(--accent); text-transform: none; font-size: 0.85rem;
+  text-align: left; padding: 0.55rem 0.7rem; border-top: 2px solid var(--border, #d8dee9);
+}
+.field-table tr.group-row:hover th { background: var(--bg-soft); }
 .pdf-fields .label-cell { width: 28%; font-weight: 600; color: var(--accent); }
 .pdf-fields .value-input { width: 100%; max-width: 100%; }
 .pdf-fields textarea.value-input { line-height: 1.5; white-space: pre-wrap; resize: vertical; }

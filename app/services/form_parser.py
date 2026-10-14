@@ -222,8 +222,8 @@ def is_heading(text: str) -> bool:
         return False
     if text.strip().endswith(":") and len(words) <= 10 and t[0].isalpha():
         return True
-    # Numbered IR section titles: "2. UNIQUE IDENTIFIERS", "3. PHYSTCAL FEATURES"
-    if re.match(r"^\d{1,2}\.\s+[A-Za-z]", t) and len(words) <= 12:
+    # Numbered IR section titles: "2. UNIQUE IDENTIFIERS", "1.INDIVIDUAL PARTICULARS:"
+    if re.match(r"^\d{1,2}\.\s*[A-Za-z]", t) and len(words) <= 12:
         body = re.sub(r"^\d{1,2}\.\s*", "", t)
         letters = [c for c in body if c.isalpha()]
         if letters and sum(c.isupper() for c in letters) >= 0.7 * len(letters):
@@ -256,8 +256,18 @@ def _is_prose(text: str) -> bool:
     return len(words) >= 10 and len(text) >= 70 and bool(re.search(r"[a-z]{3,}\s+[a-z]{2,}\s+[a-z]{2,}", text))
 
 
+def _form_rows_ahead(items: Sequence[DocItem], start: int, window: int = 80) -> int:
+    """How many table/form rows appear after ``start`` (IR Part-II after Annexure prose)."""
+    return sum(1 for it in items[start : start + window] if it.row is not None or it.header is not None)
+
+
 def find_narrative_start(items: Sequence[DocItem]) -> Optional[int]:
-    """Index of the item where the running narrative begins, or None."""
+    """Index of the item where the running narrative begins, or None.
+
+    IR Annexure-I often has long descriptive paragraphs *before* the Part-II
+    form tables. Those must not start narrative mode, or every later form row
+    is swallowed. The prose fallback is skipped when many form rows follow.
+    """
     for i, item in enumerate(items):
         if item.row is not None:
             cells = row_body(item.row)[1]
@@ -271,9 +281,10 @@ def find_narrative_start(items: Sequence[DocItem]) -> Optional[int]:
             continue
         if is_narrative_marker(item.text):
             return i
-        # Prose block fallback: three consecutive long sentence lines
+        # Prose block fallback: three consecutive long sentence lines —
+        # but not when a form (many table rows) still lies ahead.
         if i >= 3 and _is_prose(item.text):
             run = [it for it in items[i : i + 3] if it.row is None and _is_prose(it.text)]
-            if len(run) == 3:
+            if len(run) == 3 and _form_rows_ahead(items, i) < 8:
                 return i
     return None

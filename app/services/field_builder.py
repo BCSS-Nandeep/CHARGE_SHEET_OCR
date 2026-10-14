@@ -162,9 +162,23 @@ class FieldBuilder:
     def build(self, pages: Sequence[Sequence[DocItem]]) -> List[PdfField]:
         items = [it for page in pages for it in page]
         start = find_narrative_start(items)
+        # IR Annexure-I descriptive prose before Part-II tables: keep as one
+        # text block (do not split "Age: 16" / "Caste: Goud" inside the story).
+        preamble_end = _ir_preamble_end(items)
         for idx, it in enumerate(items):
             if start is not None and idx >= start:
                 self._narrative_item(it, first=(idx == start))
+            elif preamble_end is not None and idx < preamble_end:
+                if it.header is not None or it.row is not None:
+                    # Form content should never sit inside the preamble window
+                    if it.header is not None:
+                        self._open(it.header.label, it.header.value, it.page, "header_table")
+                    else:
+                        self._form_row(it)
+                else:
+                    self._append(soften_pdf_text(it.text), it.page)
+                    if self._cur is not None:
+                        self._cur.narrative = True
             elif it.header is not None:
                 self._open(it.header.label, it.header.value, it.page, "header_table")
             elif it.row is not None:
@@ -272,8 +286,18 @@ class FieldBuilder:
                     cur.parts.append(cell)
                 return
             canon, score = recognise(_label_text(cells[0]))
-            if serial is not None and canon and score >= 0.9 and canon != "brief_facts" and len(cells) > 1:
-                self._form_row(it)  # the form resumes after the narrative
+            # Resume the form when a labelled row appears. IR templates often
+            # leave the serial column blank, so do not require a printed number.
+            if (
+                canon
+                and score >= 0.9
+                and canon != "brief_facts"
+                and (len(cells) > 1 or serial is not None or _row_label_like(cells[0]))
+            ):
+                self._form_row(it)
+                return
+            if is_heading(cells[0]) and len(cells) >= 1:
+                self._form_row(it)
                 return
             self._narrative_text(" ".join(([serial] if serial else []) + cells), it.page)
             return
@@ -334,6 +358,27 @@ class FieldBuilder:
                 self._append(line, page)
         if self._cur is not None:
             self._cur.narrative = True
+
+
+_PART_II = re.compile(r"(?i)(?:annexure\s*[-–]?\s*ii|individual\s*particulars|unique\s*identifiers)")
+
+
+def _ir_preamble_end(items: Sequence[DocItem]) -> Optional[int]:
+    """Index where IR Part-II / form content begins, else None."""
+    first_form = next((i for i, it in enumerate(items) if it.row is not None or it.header is not None), None)
+    part_ii = next(
+        (
+            i
+            for i, it in enumerate(items)
+            if it.row is None and it.header is None and _PART_II.search(it.text or "")
+        ),
+        None,
+    )
+    if first_form is None and part_ii is None:
+        return None
+    if first_form is not None and part_ii is not None:
+        return min(first_form, part_ii)
+    return first_form if first_form is not None else part_ii
 
 
 def build_fields(pages: Sequence[Sequence[DocItem]], page_confidence: Optional[Dict[int, Optional[float]]] = None) -> List[PdfField]:

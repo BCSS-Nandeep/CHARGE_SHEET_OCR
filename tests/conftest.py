@@ -30,6 +30,9 @@ os.environ.setdefault("OCR_ENABLED", "false")
 os.environ["ASYNC_PROCESSING"] = "false"
 os.environ["OFFLINE_MODE"] = "true"
 os.environ["ALLOW_EXTERNAL_NETWORK"] = "false"
+# The VLM path is opt-in per test: a developer's .env (live local model) must not leak in.
+os.environ["IR_STANDARD_ENABLED"] = "false"
+os.environ["LLM_ENABLED"] = "false"
 
 
 @pytest.fixture(scope="session", autouse=True)

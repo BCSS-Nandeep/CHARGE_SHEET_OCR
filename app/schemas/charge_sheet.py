@@ -120,6 +120,9 @@ class PdfField(BaseModel):
     corrected_value: Optional[str] = None
     review_status: ReviewStatus = ReviewStatus.UNREVIEWED
     notes: Optional[str] = None
+    # Standard-template results only: the section heading and the sub-heading the field is listed under
+    section_title: Optional[str] = None
+    group: Optional[str] = None
 
 
 class DocumentTypeInfo(BaseModel):
@@ -151,6 +154,9 @@ class ChargeSheetData(BaseModel):
     page_summaries: List[PageSummary] = Field(default_factory=list)
     pipeline_stages: List[str] = Field(default_factory=list)
     unresolved_content: UnresolvedContentReport = Field(default_factory=UnresolvedContentReport)
+    # Standard-template IR (fixed 32 sections, canonical options). Present only when the report
+    # was mapped by the VLM (IR_STANDARD_ENABLED); ``fields`` is then derived from it.
+    standard_ir: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="before")
     @classmethod

@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_model: str = ""
     llm_allow_external: bool = False
+    llm_api_key: str = ""
+
+    # Standard-template IR extraction: a local OpenAI-compatible vision-language server
+    # (llm_base_url / llm_model, e.g. Nanonets-OCR served by llama.cpp) reads the report and
+    # maps it onto the fixed 32-section template. Off by default; needs llm_enabled=true.
+    ir_standard_enabled: bool = False
+    vlm_timeout_seconds: int = 900  # one request; a CPU-only server needs minutes per page
+    vlm_page_max_tokens: int = 4096
+    vlm_section_max_tokens: int = 2048
+    vlm_dpi: int = 150  # page render resolution sent to the VLM
 
     ocr_enabled: bool = True
     ocr_lang: str = "en"

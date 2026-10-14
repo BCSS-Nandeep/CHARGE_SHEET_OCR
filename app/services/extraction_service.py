@@ -30,11 +30,13 @@ from app.schemas.charge_sheet import (
     UnresolvedContentReport,
     UnresolvedItem,
 )
+from app.ir_standard.vlm_client import VlmError
 from app.schemas.raw import RawDocument, RawLine, RawPage
 from app.services.docling_service import DoclingService
 from app.services.document_detector import DocumentDetector
 from app.services.docx_service import DocxService
 from app.services.field_builder import build_fields
+from app.services.ir_standard_service import IrStandardService
 from app.services.form_parser import DocItem, drop_page_furniture
 from app.services.layout_service import (
     Box,
@@ -385,6 +387,11 @@ class ExtractionService:
         warnings: List[str] = []
 
         suffix = path.suffix.lower()
+        if self.settings.ir_standard_enabled:
+            std_data, std_problem = self._process_standard(path, suffix)
+            if std_data is not None:
+                return std_data
+            warnings.append(f"STANDARD_IR_FALLBACK: {std_problem}; the OCR pipeline was used instead")
         if suffix == ".docx":
             self._report("Reading the Word document tables")
             pdf_result = self.docx.extract(path)
@@ -509,6 +516,100 @@ class ExtractionService:
             unresolved=len(unresolved.items),
         )
         return data
+
+    def _process_standard(self, path: Path, suffix: str) -> Tuple[Optional[ChargeSheetData], Optional[str]]:
+        """VLM path: read the report, map it onto the fixed 32-section template, validate.
+
+        Returns (result, None), or (None, reason) when the VLM cannot be used so the caller
+        falls back to the OCR pipeline. Nothing is invented for sections the report lacks.
+        """
+        svc = IrStandardService()
+        try:
+            reason = svc.ready()
+            if reason:
+                return None, reason
+            is_docx = suffix == ".docx"
+            if is_docx:
+                self._report("Reading the Word document")
+                std, pages = svc.from_docx(path, self._report)
+            else:
+                count = min(self.pdf.extract(path).page_count, self.settings.max_pages)
+                pngs = []
+                for n in range(1, count + 1):
+                    self._report(f"Rendering page {n} of {count}")
+                    pngs.append(self.pdf.render_page_image(path, n, dpi=self.settings.vlm_dpi))
+                std, pages = svc.from_pages(pngs, self._report)
+        except VlmError as exc:
+            logger.warning("standard_ir_unavailable err=%s", safe_exc_message(exc))
+            return None, str(exc)
+        except Exception as exc:
+            logger.warning("standard_ir_failed err=%s", safe_exc_message(exc))
+            return None, f"standard-template mapping failed: {safe_exc_message(exc)}"
+        finally:
+            svc.close()
+
+        flags = std.get("review_flags", [])
+        failed = sorted({f["section"] for f in flags if f.get("code") == "mapping_failed"})
+        absent = sorted({f["section"] for f in flags if f.get("code") == "section_not_found"})
+        warnings: List[str] = []
+        if failed:
+            warnings.append(f"STANDARD_IR: {len(failed)} section(s) could not be mapped: {', '.join(failed)}")
+        if absent:
+            warnings.append(f"STANDARD_IR: {len(absent)} section(s) not found in the report: {', '.join(absent)}")
+
+        engine = "native" if is_docx else self.settings.llm_model
+        summaries = [
+            PageSummary(
+                page_number=n,
+                route="native" if is_docx else "ocr",
+                text_source="native" if is_docx else "vlm",
+                page_status="native_ok" if is_docx else "ocr_ok",
+                char_count=len(md),
+                ocr_engine=None if is_docx else engine,
+                note="DOCX read natively" if is_docx else "Read by the local VLM",
+            )
+            for n, md in enumerate(pages, start=1)
+        ]
+        self.last_raw = RawDocument(
+            page_count=len(pages),
+            pages=[
+                RawPage(
+                    page=n,
+                    text_source="native" if is_docx else "ocr",
+                    ocr_engine=None if is_docx else engine,
+                    lines=[
+                        RawLine(line=i, text=ln, source="native" if is_docx else "ocr")
+                        for i, ln in enumerate((x for x in md.splitlines() if x.strip()), start=1)
+                    ],
+                )
+                for n, md in enumerate(pages, start=1)
+            ],
+        )
+        stages = [
+            StageResult(stage="docx_native_read" if is_docx else "vlm_page_read",
+                        detail=f"{len(pages)} page(s) read" + ("" if is_docx else f" by {engine}")),
+            StageResult(
+                stage="standard_template_mapping",
+                status=StageStatus.DEGRADED if failed else StageStatus.OK,
+                detail=f"{len(flags)} review flag(s); {len(failed)} section(s) failed, {len(absent)} not found",
+            ),
+        ]
+        data = ChargeSheetData(
+            document_info=DocumentTypeInfo(
+                document_type="interrogation_report",
+                classification_notes="Mapped onto the standard 32-section IR template",
+            ),
+            fields=svc.fields_from_standard(std),
+            standard_ir=std,
+            extraction_warnings=warnings,
+            extraction_status=ExtractionStatus.PARTIAL if failed else ExtractionStatus.COMPLETE,
+            stage_results=stages,
+            page_summaries=summaries,
+            pipeline_stages=[s.stage for s in stages],
+            requires_human_review=True,
+        )
+        audit("standard_ir_complete", pages=len(pages), flags=len(flags), failed=len(failed), absent=len(absent))
+        return data, None
 
     def _raw_document(self, pdf_result: PdfExtractionResult, page_summaries: List[PageSummary]) -> RawDocument:
         """Every text line read from each page, as read: text layer and/or OCR, nothing dropped."""

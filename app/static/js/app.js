@@ -320,7 +320,9 @@ function initResultsPage(documentId) {
     const input = multi
       ? `<textarea class="edit-input value-input" rows="${lines}" data-field-id="${escapeHtml(f.id)}" data-initial="${escapeHtml(value)}">${escapeHtml(value)}</textarea>`
       : `<input type="text" class="edit-input value-input" data-field-id="${escapeHtml(f.id)}" data-initial="${escapeHtml(value)}" value="${escapeHtml(value)}" />`;
-    const pages = f.pages && f.pages.length > 1 ? `p.${f.pages[0]}–${f.pages[f.pages.length - 1]}` : `p.${f.page}`;
+    const pages = f.section_title
+      ? (f.page ? `§${f.page}` : "")
+      : (f.pages && f.pages.length > 1 ? `p.${f.pages[0]}–${f.pages[f.pages.length - 1]}` : `p.${f.page}`);
     const label = f.label
       ? escapeHtml(f.label)
       : `<span class="muted"><em>(text before any label)</em></span>`;
@@ -340,16 +342,31 @@ function initResultsPage(documentId) {
     if (!fields.length) {
       return `<div class="card section"><p class="muted">No labels or values were detected in this PDF (nothing was invented).</p></div>`;
     }
-    const byPage = new Map();
+    // Standard-template results carry their section title (and a sub-heading per group of fields):
+    // show "3. PHYSICAL FEATURES", then each sub-heading, then its fields. Other results group by page.
+    const standard = fields.some((f) => f.section_title);
+    const groups = new Map();
     fields.forEach((f) => {
-      if (!byPage.has(f.page)) byPage.set(f.page, []);
-      byPage.get(f.page).push(f);
+      const key = standard ? (f.section_title || "Other") : f.page;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(f);
     });
-    return [...byPage.entries()].map(([page, list]) => `
+    const rowsFor = (list) => {
+      let last = null;
+      return list.map((f) => {
+        let head = "";
+        if (standard && f.group && f.group !== last) {
+          head = `<tr class="group-row"><th colspan="5">${escapeHtml(f.group)}</th></tr>`;
+        }
+        last = f.group || null;
+        return head + pdfFieldRow(f);
+      }).join("");
+    };
+    return [...groups.entries()].map(([key, list]) => `
       <div class="card section page-section">
-        <h3>Page ${escapeHtml(page)} <span class="muted small">(${list.length} field${list.length === 1 ? "" : "s"})</span></h3>
-        <table class="field-table pdf-fields"><thead><tr><th>No.</th><th>Label (as in the PDF)</th><th>Value (as in the PDF)</th><th>Page</th><th>Review</th></tr></thead>
-        <tbody>${list.map(pdfFieldRow).join("")}</tbody></table>
+        <h3>${standard ? escapeHtml(key) : `Page ${escapeHtml(key)}`} <span class="muted small">(${list.length} field${list.length === 1 ? "" : "s"})</span></h3>
+        <table class="field-table pdf-fields"><thead><tr><th>No.</th><th>Label${standard ? "" : " (as in the PDF)"}</th><th>Value${standard ? "" : " (as in the PDF)"}</th><th>${standard ? "Section" : "Page"}</th><th>Review</th></tr></thead>
+        <tbody>${rowsFor(list)}</tbody></table>
       </div>`).join("");
   }
 
