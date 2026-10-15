@@ -1,0 +1,16 @@
+{
+  "comment": "Where each extraction implementation comes from. scripts/verify_integrity.py checks the files against these commits.",
+  "repository": "https://github.com/BCSS-Nandeep/CHARGE_SHEET_OCR.git",
+  "ir_ocr": {
+    "role": "host application and interrogation-report extractor",
+    "branch": "IR_OCR",
+    "commit": "004a1eef5bfc8eba3487d595326a46561595f2e3",
+    "paths": ["app/", "integrations/"]
+  },
+  "charge_sheet_ocr": {
+    "role": "charge-sheet extractor (unmodified snapshot, runs as its own process)",
+    "branch": "main",
+    "commit": "e6d6dd6c1213bd91895f959c98aed51723ebf9a1",
+    "paths": ["vendor/charge_sheet_ocr/"]
+  }
+}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — History{% endblock %}
+{% block page %}history{% endblock %}
+{% block subtitle %}Document history{% endblock %}
+{% block content %}
+    <div class="card">
+      <h2>Uploaded documents</h2>
+      <table class="history">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>Status</th>
+            <th>Pages</th>
+            <th>Uploaded</th>
+            <th>Verified</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="history-body">
+          <tr><td colspan="6" class="muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+{% endblock %}

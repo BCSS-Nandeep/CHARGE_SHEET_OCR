@@ -1,0 +1,38 @@
+{
+  "document_id": "synthetic_02_alternate_labels",
+  "description": "Space-aligned 'Label   value' columns with alternate labels (Distt., P.S., Challan No., Forwarded on)",
+  "layout": "native-text",
+  "source": {"fixture": "tests/fixtures/sample_02_alternate_labels.pdf"},
+  "requires_ocr": false,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_alternate_labels).",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": "Sample East",
+      "police_station": "Riverside Thana",
+      "year": "2023",
+      "fir_number": "778/2023",
+      "crime_number": "CR-778/2023",
+      "fir_date": "05-11-2023",
+      "charge_sheet_number": "CH-12/2024",
+      "submission_date": "01.02.2024",
+      "court_name": "Sessions Court, East",
+      "supplementary_or_original": "Supplementary"
+    },
+    "legal_sections": [
+      {"act": "IPC", "section": "420"},
+      {"act": "IPC", "section": "406"},
+      {"act": "IT Act", "section": "66"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Amit Joshi", "parent_or_spouse": "R. Joshi", "age": "40", "address_contains": "Block C"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "Sunita Devi"},
+      {"serial_no": "2", "name": "Bank Manager"}
+    ],
+    "investigating_officers": [{"name": "K. Rao"}],
+    "related_case_references": [],
+    "conflicts": []
+  }
+}

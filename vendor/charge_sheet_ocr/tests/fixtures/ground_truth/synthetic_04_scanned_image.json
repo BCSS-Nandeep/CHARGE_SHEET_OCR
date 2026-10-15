@@ -1,0 +1,43 @@
+{
+  "document_id": "synthetic_04_scanned_image",
+  "description": "Image-only page (text rendered into a bitmap); requires local OCR",
+  "layout": "scanned-ocr",
+  "source": {"fixture": "tests/fixtures/sample_04_scanned_image.pdf"},
+  "requires_ocr": true,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_image_like_scanned).",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": "Coastal District",
+      "police_station": "Harbour PS",
+      "year": "2021",
+      "fir_number": "901/2021",
+      "fir_date": "18/08/2021",
+      "charge_sheet_number": "CS-3/2022",
+      "court_name": "Special Court"
+    },
+    "legal_sections": [
+      {"act": "IPC", "section": "307"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Manoj Pillai", "parent_or_spouse": "Pillai", "age": "35"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "Arjun Nair"},
+      {"serial_no": "2", "name": "Ravi"}
+    ],
+    "investigating_officers": [{"name": "L. Thomas"}],
+    "related_case_references": [],
+    "conflicts": [],
+    "ocr_reference_lines": [
+      {"page": 1, "text": "CHARGE SHEET"},
+      {"page": 1, "text": "District: Coastal District"},
+      {"page": 1, "text": "Police Station: Harbour PS"},
+      {"page": 1, "text": "FIR No.: 901/2021"},
+      {"page": 1, "text": "Charge Sheet No.: CS-3/2022"},
+      {"page": 1, "text": "Date of FIR: 18/08/2021"},
+      {"page": 1, "text": "1. Manoj Pillai s/o Pillai age 35"},
+      {"page": 1, "text": "Brief Facts: Assault case investigated and charge sheeted."}
+    ]
+  }
+}

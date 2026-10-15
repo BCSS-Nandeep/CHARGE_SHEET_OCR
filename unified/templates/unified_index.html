@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — Upload{% endblock %}
+{% block page %}unified-upload{% endblock %}
+{% block subtitle %}Charge sheets and interrogation reports · local-only extraction{% endblock %}
+{% block content %}
+    <div class="card">
+      <h2>Upload a document</h2>
+      <div id="u-dropzone" class="dropzone" role="button" tabindex="0">
+        <p><strong>Drag &amp; drop</strong> a charge sheet or interrogation report here</p>
+        <p class="hint">or click to select · PDF, DOCX, PNG, JPEG or TIFF · scanned and multi-page files supported</p>
+      </div>
+      <input id="u-file-input" type="file" accept=".pdf,.docx,.png,.jpg,.jpeg,.tif,.tiff,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/tiff" class="hidden" />
+      <div id="u-file-meta" style="margin-top:1rem"></div>
+      <div class="row" style="margin-top:1rem">
+        <label for="u-type">Document type</label>
+        <select id="u-type">
+          <option value="auto" selected>Detect automatically</option>
+          <option value="charge_sheet">Charge sheet</option>
+          <option value="interrogation_report">Interrogation report</option>
+        </select>
+        <button class="btn" id="u-upload-btn" disabled>Upload &amp; process</button>
+      </div>
+      <p class="muted small">Automatic detection reads the file's content (and runs OCR on the first pages of scanned files). If the type is not clear you are asked to choose; nothing is sent to an extractor until the type is known.</p>
+      <div class="progress" id="u-progress"><span></span></div>
+      <div id="u-status" class="hidden"></div>
+    </div>
+    <div class="card hidden" id="u-choose">
+      <h2>Which document is this?</h2>
+      <div id="u-choose-why"></div>
+      <div class="row" style="margin-top:0.75rem">
+        <button class="btn" id="u-pick-charge_sheet" data-type="charge_sheet">Charge sheet</button>
+        <button class="btn" id="u-pick-interrogation_report" data-type="interrogation_report">Interrogation report</button>
+        <button class="btn secondary" id="u-pick-discard">Discard this upload</button>
+      </div>
+    </div>
+    <div class="card hidden" id="u-pending">
+      <h2>Uploads waiting for a document type</h2>
+      <div id="u-pending-list"></div>
+    </div>
+    <link rel="stylesheet" href="/unified-static/unified.css?v={{ unified_asset_version }}" />
+    <script src="/unified-static/unified.js?v={{ unified_asset_version }}" defer></script>
+{% endblock %}

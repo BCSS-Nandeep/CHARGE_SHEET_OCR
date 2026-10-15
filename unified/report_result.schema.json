@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Unified combined report_result.json (envelope 2.0.0)",
+  "description": "One file per document: <output>/<uploaded file name>_<ext>/report_result.json. A derived export: the owning OCR service keeps the OCR results, corrections and verification, the person-image manifest keeps the images. ocr.payload is embedded exactly as the service's GET /api/v1/documents/{id}/results returned it, with its own native schema_version (never rewritten); it is null when OCR has produced nothing. Each pipeline's status stands on its own. Envelope 1.x was the IR-only envelope of the person-image integration; the blocks processing / ocr / person_images keep their 1.x meaning in 2.0.0.",
+  "type": "object",
+  "required": ["schema_version", "document_id", "generated_at", "document", "classification", "processing", "ocr",
+               "person_images", "review", "provenance"],
+  "properties": {
+    "schema_version": {"const": "2.0.0", "description": "Version of THIS envelope (not of any OCR payload)."},
+    "document_id": {"type": "string", "description": "The unified document id (equal to the owning service's document id)."},
+    "generated_at": {"type": "string", "description": "UTC, when this file was last rebuilt"},
+    "document": {
+      "type": "object",
+      "required": ["original_filename", "document_type", "document_type_source"],
+      "properties": {
+        "original_filename": {"type": "string"},
+        "document_type": {"enum": ["charge_sheet", "interrogation_report"]},
+        "document_type_source": {"enum": ["auto", "manual", "legacy"], "description": "legacy = uploaded to IR_OCR before the merge"},
+        "content_type": {"type": ["string", "null"]},
+        "detected_kind": {"type": ["string", "null"], "description": "pdf | docx | png | jpeg | tiff, from the file's content"},
+        "size_bytes": {"type": ["integer", "null"]},
+        "sha256": {"type": ["string", "null"], "description": "of the kept original, which the person-image pipeline also reads"},
+        "intake_id": {"type": ["string", "null"], "description": "set when the upload waited for a manual type choice"},
+        "registered_at": {"type": ["string", "null"]}
+      }
+    },
+    "classification": {
+      "type": ["object", "null"],
+      "description": "How the document type was decided: file facts, text source, both detectors' verdicts, markers, scores, reasons, warnings. No document text is stored. null for legacy documents.",
+      "properties": {
+        "document_type": {"type": "string"},
+        "decision": {"enum": ["auto", "manual_required", "manual_selected"]},
+        "confidence": {"type": "number"},
+        "candidates": {"type": "array"},
+        "reasons": {"type": "array"},
+        "warnings": {"type": "array"}
+      }
+    },
+    "processing": {
+      "type": "object",
+      "required": ["ocr_status", "ocr_document_status", "ocr_extraction_status", "ocr_error_summary",
+                   "image_extraction_status", "image_extraction_error_summary", "warnings", "errors"],
+      "properties": {
+        "ocr_status": {"enum": ["processing", "succeeded", "partial", "failed", "unknown"]},
+        "ocr_document_status": {"type": ["string", "null"], "description": "the service's own document status (queued, processing, completed, failed, verified)"},
+        "ocr_extraction_status": {"type": ["string", "null"], "description": "results.extraction_status of the native payload (complete, partial, failed)"},
+        "ocr_error_summary": {"type": ["string", "null"]},
+        "ocr_progress": {"type": ["object", "null"], "description": "current step and elapsed seconds while OCR runs"},
+        "image_extraction_status": {"enum": ["not_applicable", "not_started", "queued", "processing", "succeeded", "partial", "no_person_images", "failed", "unsupported"],
+                                    "description": "status of the LATEST image run; not_applicable for charge sheets, which get no person-image extraction"},
+        "image_extraction_error_summary": {"type": ["string", "null"], "description": "no file system paths"},
+        "warnings": {"type": "array", "items": {"type": "object"}},
+        "errors": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "ocr": {
+      "type": "object",
+      "required": ["pipeline", "schema_version", "payload"],
+      "properties": {
+        "pipeline": {"enum": ["ir_ocr", "charge_sheet_ocr"], "description": "which unchanged service produced the payload"},
+        "schema_version": {"type": ["string", "null"], "description": "payload.results.schema_version, copied, never rewritten"},
+        "payload": {"type": ["object", "null"], "description": "the service's native ResultsResponse: document, results, field_corrections"}
+      }
+    },
+    "person_images": {
+      "type": "object",
+      "required": ["status", "run_id", "total_images_found", "skipped_images", "unreadable_images", "images"],
+      "properties": {
+        "status": {"type": "string"},
+        "run_id": {"type": ["string", "null"], "description": "the run whose images are listed (newest usable run)"},
+        "latest_run_id": {"type": "string"},
+        "total_images_found": {"type": "integer"},
+        "skipped_images": {"type": "integer"},
+        "unreadable_images": {"type": "integer"},
+        "started_at": {"type": ["string", "null"]},
+        "finished_at": {"type": ["string", "null"]},
+        "images": {"type": "array", "items": {"type": "object", "required": ["file", "name"],
+                   "description": "paths relative to the document's output folder; image bytes are never embedded"}}
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": ["status", "verified", "corrected_fields"],
+      "description": "Summary only. The saved corrections themselves are in ocr.payload.field_corrections; the full correction history stays in the owning service (GET /api/v1/documents/{id}/corrections).",
+      "properties": {
+        "status": {"enum": ["verified", "needs_review", "reviewed", "not_ready", "not_available"]},
+        "verified": {"type": "boolean"},
+        "verified_by": {"type": ["string", "null"]},
+        "requires_review": {"type": ["boolean", "null"]},
+        "corrected_fields": {"type": "integer"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["unified_version", "envelope_version", "extractor"],
+      "properties": {
+        "unified_version": {"type": "string"},
+        "envelope_version": {"const": "2.0.0"},
+        "native_ocr_schema_version": {"type": ["string", "null"]},
+        "extractor": {"type": "object", "required": ["implementation", "commit"],
+                      "description": "which implementation produced the OCR payload: repository, branch, commit, how it is run"}
+      }
+    }
+  }
+}

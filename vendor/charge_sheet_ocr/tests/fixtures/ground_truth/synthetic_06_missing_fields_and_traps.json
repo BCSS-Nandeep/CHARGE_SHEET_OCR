@@ -1,0 +1,32 @@
+{
+  "document_id": "synthetic_06_missing_fields_and_traps",
+  "description": "Missing district and charge-sheet number, compound 'FIR No. & Date' label, narrative numbers (phone, age, register serial 302) that must not become sections",
+  "layout": "native-text",
+  "source": {"fixture": "tests/fixtures/sample_06_missing_fields_and_traps.pdf"},
+  "requires_ocr": false,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_missing_fields_and_traps). Written after the parser rewrite by the same author, so this is not a blind test.",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": null,
+      "police_station": "Riverbend",
+      "fir_number": "19/2025",
+      "fir_date": "03-01-2025",
+      "charge_sheet_number": null,
+      "submission_date": null
+    },
+    "legal_sections": [
+      {"act": "IPC", "section": "379"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Unknown person"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "B. Rao"},
+      {"serial_no": "2", "name": "Lata Devi", "parent_or_spouse": "Mohan", "age": "38", "address_contains": "Canal Road"}
+    ],
+    "investigating_officers": [{"name": "P. Kumar"}],
+    "related_case_references": [],
+    "conflicts": []
+  }
+}

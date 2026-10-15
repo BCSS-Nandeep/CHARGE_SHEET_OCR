@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ asset_version }}" />
+</head>
+<body data-api-key-header="{{ api_key_header }}" data-page="{% block page %}{% endblock %}" {% block body_attrs %}{% endblock %}>
+  <div class="wrap">
+    <header class="app-header">
+      <div>
+        <h1>{{ app_name }}</h1>
+        <div class="sub">{% block subtitle %}{% endblock %}</div>
+        <div class="sub small" id="service-status"></div>
+      </div>
+      <nav>
+        <a {% if self.page() == "upload" %}class="active"{% endif %} href="/">Upload</a>
+        <a {% if self.page() == "history" %}class="active"{% endif %} href="/history">History</a>
+        {% if docs_enabled %}<a href="/docs" target="_blank" rel="noopener">API Docs</a>{% endif %}
+      </nav>
+    </header>
+    <div class="api-key-box card" id="api-key-box">
+      <label for="api-key-input">API key</label>
+      <input id="api-key-input" type="password" autocomplete="off" placeholder="Required when authentication is enabled" />
+      <button class="btn secondary" id="api-key-save" type="button">Use key</button>
+      <span id="api-key-msg" class="hidden"></span>
+    </div>
+    {% block content %}{% endblock %}
+  </div>
+  <script src="/static/js/app.js?v={{ asset_version }}"></script></body>
+</html>

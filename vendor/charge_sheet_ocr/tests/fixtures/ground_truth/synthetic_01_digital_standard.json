@@ -1,0 +1,39 @@
+{
+  "document_id": "synthetic_01_digital_standard",
+  "description": "Numbered 'N. Label : value' lines, accused/witness lists, narrative continues on page 2",
+  "layout": "native-text",
+  "source": {"fixture": "tests/fixtures/sample_01_digital_standard.pdf"},
+  "requires_ocr": false,
+  "verification": "Values copied from scripts/generate_sample_pdfs.py (make_digital_standard).",
+  "expected": {
+    "document_type": "charge_sheet",
+    "case": {
+      "district": "Sample District",
+      "police_station": "Central PS",
+      "year": "2024",
+      "fir_number": "123/2024",
+      "fir_date": "12/03/2024",
+      "charge_sheet_number": "CS-45/2024",
+      "submission_date": "20/06/2024",
+      "court_name": "JMFC, Sample City",
+      "final_report_type": "Charge Sheet",
+      "supplementary_or_original": "Original",
+      "jurisdiction": "Sample Circle"
+    },
+    "legal_sections": [
+      {"act": "IPC", "section": "302"},
+      {"act": "IPC", "section": "34"}
+    ],
+    "accused": [
+      {"serial_no": "1", "name": "Suresh Singh", "parent_or_spouse": "Mohan Singh", "age": "32", "address_contains": "Ward 4"},
+      {"serial_no": "2", "name": "Vijay Patel", "parent_or_spouse": "K. Patel", "age": "28", "address_contains": "Market Road"}
+    ],
+    "witnesses": [
+      {"serial_no": "1", "name": "Ramesh Kumar", "role_contains": "complainant"},
+      {"serial_no": "2", "name": "Mehta"}
+    ],
+    "investigating_officers": [{"name": "Anita Verma"}],
+    "related_case_references": [],
+    "conflicts": []
+  }
+}

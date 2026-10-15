@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+*.pem
+*.key
+
+# Data & uploads (sensitive)
+uploads/
+data/
+# Ground truth / reports for real documents contain personal data — never commit
+tests/fixtures/private/
+*.db
+*.sqlite
+*.sqlite3
+tmp/
+temp/
+.cache/
+
+# OCR / model caches
+.paddleocr/
+~/.paddleocr/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Logs
+logs/
+*.log
+tmp_debug*.txt
+tmp_*.txt

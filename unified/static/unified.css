@@ -1,0 +1,19 @@
+/* Unified application additions. Reuses the pages' own classes (card, row, badge, alert, btn ...). */
+.u-banner { margin-bottom: 1rem; }
+.u-row { align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.u-spacer { flex: 1 1 auto; }
+#u-type { padding: 0.45rem 0.6rem; border: 1px solid var(--border, #c5d0de); border-radius: 6px; background: var(--bg-elevated, #fff); color: inherit; }
+#u-choose ul, #u-pending ul { margin: 0.4rem 0 0 1.1rem; padding: 0; }
+
+/* Person Images tab (same look as the IR_OCR person-image integration) */
+.pi-head { align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.pi-head h3 { margin: 0; }
+.pi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.pi-fig { margin: 0; border: 1px solid var(--border, #c5d0de); border-radius: 6px; padding: 0.5rem; background: var(--bg-soft, #f4f7fb); }
+.pi-fig img { display: block; width: 100%; height: 220px; object-fit: contain; background: #fff; border-radius: 4px; }
+.pi-fig figcaption { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.15rem; word-break: break-all; }
+.pi-missing { height: 220px; display: flex; align-items: center; justify-content: center; text-align: center;
+  color: var(--muted, #5b6b7d); background: #fff; border: 1px dashed var(--border, #c5d0de); border-radius: 4px; }
+.badge.partial { background: #fff1d6; color: #7a5200; }
+.badge.skipped, .badge.not_started, .badge.unsupported { background: #e2e8f0; color: #5b6b7d; }
+#pi-standalone { margin-top: 1rem; }
