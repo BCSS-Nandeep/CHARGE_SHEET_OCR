@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IR_OCR combined report_result.json",
+  "description": "One file per document: <output>/<document_id>/report_result.json. A derived export; the OCR database stays the source of truth. The OCR payload is embedded exactly as GET /api/v1/documents/{id}/results returns it (with its own schema_version); it is null when OCR has produced nothing. Each pipeline's status stands on its own. Paths are relative to the document's folder <output>/<uploaded file name>_<ext>/; image bytes are never embedded.",
+  "type": "object",
+  "required": ["schema_version", "document_id", "generated_at", "processing", "ocr", "person_images"],
+  "properties": {
+    "schema_version": {"const": "1.0.0", "description": "Version of THIS envelope (not of the OCR payload)."},
+    "document_id": {"type": "string"},
+    "generated_at": {"type": "string", "description": "UTC, when this file was last rebuilt"},
+    "processing": {
+      "type": "object",
+      "required": ["ocr_status", "ocr_document_status", "ocr_extraction_status", "ocr_error_summary",
+                   "image_extraction_status", "image_extraction_error_summary"],
+      "properties": {
+        "ocr_status": {"enum": ["processing", "succeeded", "partial", "failed", "unknown"]},
+        "ocr_document_status": {"type": "string", "description": "the application's own document status (queued, processing, completed, failed, verified)"},
+        "ocr_extraction_status": {"type": ["string", "null"], "description": "results.extraction_status of the OCR payload (complete, partial, failed)"},
+        "ocr_error_summary": {"type": ["string", "null"]},
+        "image_extraction_status": {"enum": ["not_started", "queued", "processing", "succeeded", "partial", "no_person_images", "failed", "unsupported"],
+                                    "description": "status of the LATEST image run"},
+        "image_extraction_error_summary": {"type": ["string", "null"], "description": "no file system paths"}
+      }
+    },
+    "ocr": {
+      "type": "object",
+      "required": ["schema_version", "payload"],
+      "properties": {
+        "schema_version": {"type": ["string", "null"], "description": "payload.results.schema_version, copied, never rewritten"},
+        "payload": {"type": ["object", "null"], "description": "ResultsResponse: document, results (fields, provenance, validation, review state, standard_ir ...), field_corrections"}
+      }
+    },
+    "person_images": {
+      "type": "object",
+      "required": ["status", "run_id", "total_images_found", "skipped_images", "unreadable_images", "images"],
+      "properties": {
+        "status": {"type": "string"},
+        "run_id": {"type": ["string", "null"], "description": "the run whose images are listed (newest usable run)"},
+        "latest_run_id": {"type": "string"},
+        "total_images_found": {"type": "integer"},
+        "skipped_images": {"type": "integer", "description": "images found that do not show a person"},
+        "unreadable_images": {"type": "integer"},
+        "started_at": {"type": ["string", "null"]},
+        "finished_at": {"type": ["string", "null"]},
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "name", "width", "height", "faces", "size_bytes", "sha256"],
+            "properties": {
+              "file": {"type": "string", "description": "relative to the document's folder, e.g. person_images/<file name> image.jpeg or person_images/rerun_2/<file name> image (2).jpeg"},
+              "name": {"type": "string"},
+              "source_page": {"type": ["integer", "null"], "description": "PDF page; null for DOCX / XLSX"},
+              "source_member": {"type": ["string", "null"], "description": "name of the embedded image in the source file"},
+              "width": {"type": "integer"}, "height": {"type": "integer"},
+              "faces": {"type": "integer"}, "size_bytes": {"type": "integer"}, "sha256": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

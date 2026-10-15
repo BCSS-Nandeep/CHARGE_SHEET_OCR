@@ -1,0 +1,6 @@
+# Extra dependency of the person-image integration (the IR_OCR requirements.txt is deliberately left unchanged).
+# Same build the original REPORT_IMAGE_EXTRACTOR runs with. FaceDetectorYN + the 2023mar YuNet model need OpenCV >= 4.8.
+# PyMuPDF, Pillow and numpy are already in the main requirements.txt.
+#
+#   pip install -r integrations/person_images/requirements.txt
+opencv-python-headless==5.0.0.93

@@ -1,0 +1,3 @@
+# person images are personal data: never commit them
+*
+!.gitignore
